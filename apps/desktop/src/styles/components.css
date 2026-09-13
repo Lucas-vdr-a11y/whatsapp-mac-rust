@@ -393,7 +393,7 @@
   position: relative;
   max-width: min(65%, 640px);
   padding: 6px 9px 8px;
-  border-radius: 8px;
+  border-radius: var(--radius-bubble);
   background: var(--bubble-in);
   color: var(--bubble-text);
   font-size: var(--font-size-message);

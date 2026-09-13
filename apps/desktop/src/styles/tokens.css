@@ -1,60 +1,62 @@
 /*
  * Design tokens.
  *
- * Values mirror the current WhatsApp desktop design system. Both themes are
- * provided; the app defaults to dark, matching macOS appearance settings later.
- * No proprietary assets are referenced here.
+ * Values are extracted from the production WhatsApp Web design system (WDS)
+ * stylesheet and cross-checked against the installed macOS app. Both themes are
+ * provided; the app follows the system appearance by default.
+ *
+ * No proprietary assets are referenced here — colors and metrics only.
  */
 
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  /* Surfaces */
-  --bg-rail: #111b21;
-  --bg-panel: #111b21;
-  --bg-header: #202c33;
-  --bg-chat: #0b141a;
-  --bg-input: #2a3942;
-  --bg-hover: rgba(233, 237, 239, 0.05);
-  --bg-active: #2a3942;
-  --bg-selected: #2a3942;
-  --bg-modal: #111b21;
-  --bg-badge: #00a884;
+  /* Surfaces (WDS surface-default / elevated / emphasized) */
+  --bg-rail: #161717;
+  --bg-panel: #161717;
+  --bg-header: #1d1f1f;
+  --bg-chat: #161717;
+  --bg-input: #242626;
+  --bg-hover: rgba(255, 255, 255, 0.1);
+  --bg-active: #242626;
+  --bg-selected: rgba(255, 255, 255, 0.1);
+  --bg-modal: #161717;
+  --bg-badge: #21c063;
 
-  /* Text */
-  --text-primary: #e9edef;
-  --text-secondary: #8696a0;
-  --text-muted: #667781;
-  --text-inverse: #111b21;
+  /* Text (WDS content-*) */
+  --text-primary: #fafafa;
+  --text-secondary: rgba(255, 255, 255, 0.6);
+  --text-muted: #757778;
+  --text-inverse: #0a0a0a;
 
   /* Icons */
-  --icon: #aebac1;
-  --icon-strong: #e9edef;
+  --icon: #fafafa;
+  --icon-strong: #fafafa;
 
   /* Brand */
-  --accent: #00a884;
-  --accent-strong: #06cf9c;
+  --accent: #21c063;
+  --accent-strong: #d9fdd3;
 
   /* Bubbles */
-  --bubble-in: #202c33;
-  --bubble-out: #005c4b;
-  --bubble-text: #e9edef;
+  --bubble-in: #242626;
+  --bubble-out: #144d37;
+  --bubble-text: #fafafa;
 
   /* Semantic */
-  --link: #53bdeb;
-  --divider: rgba(134, 150, 160, 0.15);
+  --link: #21c063;
+  --divider: rgba(255, 255, 255, 0.1);
   --danger: #f15c6d;
   --warning: #ffbc38;
   --tick-read: #53bdeb;
-  --unread-badge: #00a884;
-  --unread-badge-text: #111b21;
+  --unread-badge: #21c063;
+  --unread-badge-text: #0a0a0a;
 
   /* Elevation */
-  --shadow-bubble: 0 1px 0.5px rgba(11, 20, 26, 0.13);
-  --shadow-modal: 0 12px 44px rgba(11, 20, 26, 0.6);
+  --shadow-bubble: 0 1px 0.5px rgba(0, 0, 0, 0.13);
+  --shadow-modal: 0 12px 44px rgba(0, 0, 0, 0.6);
 
-  /* Geometry */
+  /* Geometry (measured from production) */
   --rail-width: 64px;
   --list-width: 400px;
   --header-height: 59px;
@@ -62,6 +64,7 @@
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  --radius-bubble: 7.5px;
   --radius-full: 9999px;
 
   /* Typography */
@@ -81,37 +84,38 @@
 
   --bg-rail: #ffffff;
   --bg-panel: #ffffff;
-  --bg-header: #f0f2f5;
-  --bg-chat: #efeae2;
+  --bg-header: #f7f5f3;
+  --bg-chat: #f5f1eb;
   --bg-input: #ffffff;
-  --bg-hover: rgba(11, 20, 26, 0.05);
-  --bg-active: #e9edef;
-  --bg-selected: #f0f2f5;
+  --bg-hover: rgba(194, 189, 184, 0.15);
+  --bg-active: rgba(194, 189, 184, 0.15);
+  --bg-selected: rgba(194, 189, 184, 0.15);
   --bg-modal: #ffffff;
-  --bg-badge: #00a884;
+  --bg-badge: #1daa61;
 
-  --text-primary: #111b21;
-  --text-secondary: #667781;
-  --text-muted: #8696a0;
+  --text-primary: #0a0a0a;
+  --text-secondary: rgba(0, 0, 0, 0.6);
+  --text-muted: #959393;
   --text-inverse: #ffffff;
 
-  --icon: #54656f;
-  --icon-strong: #111b21;
+  --icon: #0a0a0a;
+  --icon-strong: #0a0a0a;
 
-  --accent: #00a884;
-  --accent-strong: #06cf9c;
+  --accent: #1daa61;
+  --accent-strong: #15603e;
 
   --bubble-in: #ffffff;
   --bubble-out: #d9fdd3;
-  --bubble-text: #111b21;
+  --bubble-text: #0a0a0a;
 
-  --link: #027eb5;
-  --divider: #e9edef;
+  --link: #1b8755;
+  --divider: rgba(0, 0, 0, 0.1);
   --danger: #ea0038;
-  --tick-read: #53bdeb;
-  --unread-badge: #00a884;
+  --warning: #d97706;
+  --tick-read: #007bfc;
+  --unread-badge: #1daa61;
   --unread-badge-text: #ffffff;
 
-  --shadow-bubble: 0 1px 0.5px rgba(11, 20, 26, 0.13);
-  --shadow-modal: 0 12px 44px rgba(11, 20, 26, 0.26);
+  --shadow-bubble: 0 1px 0.5px rgba(0, 0, 0, 0.13);
+  --shadow-modal: 0 12px 44px rgba(0, 0, 0, 0.26);
 }

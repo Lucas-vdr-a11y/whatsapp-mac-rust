@@ -1,7 +1,11 @@
+import { useState, type MouseEvent as ReactMouseEvent } from "react";
+import { Archive, Bell, PinOff, Trash2 } from "lucide-react";
 import { formatListTime } from "../lib/time";
 import { initials } from "../lib/names";
 import type { ChatSummary, Jid } from "../lib/types";
 import { useAppStore, type ChatFilter } from "../store/app";
+import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { NewChatModal } from "./NewChatModal";
 import {
   BellOff,
   CheckCheck,
@@ -28,13 +32,76 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
   const setQuery = useAppStore((state) => state.setQuery);
   const filter = useAppStore((state) => state.filter);
   const setFilter = useAppStore((state) => state.setFilter);
+  const togglePinned = useAppStore((state) => state.togglePinned);
+  const toggleMuted = useAppStore((state) => state.toggleMuted);
+  const archiveChat = useAppStore((state) => state.archiveChat);
+  const markRead = useAppStore((state) => state.markRead);
+  const deleteChat = useAppStore((state) => state.deleteChat);
+
+  const [newChatOpen, setNewChatOpen] = useState(false);
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    chat: ChatSummary;
+  } | null>(null);
+
+  const openMenu = (event: ReactMouseEvent, chat: ChatSummary) => {
+    event.preventDefault();
+    onSelect(chat.id);
+    setMenu({ x: event.clientX, y: event.clientY, chat });
+  };
+
+  const menuItems: ContextMenuEntry[] = menu
+    ? [
+        {
+          id: "pin",
+          label: menu.chat.pinned ? "Unpin chat" : "Pin chat",
+          icon: menu.chat.pinned ? PinOff : Pin,
+          onSelect: () => togglePinned(menu.chat.id),
+        },
+        {
+          id: "mute",
+          label: menu.chat.muted
+            ? "Unmute notifications"
+            : "Mute notifications",
+          icon: menu.chat.muted ? Bell : BellOff,
+          onSelect: () => toggleMuted(menu.chat.id),
+        },
+        {
+          id: "archive",
+          label: "Archive chat",
+          icon: Archive,
+          onSelect: () => archiveChat(menu.chat.id),
+        },
+        {
+          id: "read",
+          label: "Mark as read",
+          icon: CheckCheck,
+          disabled: menu.chat.unreadCount === 0,
+          onSelect: () => markRead(menu.chat.id),
+        },
+        { kind: "separator", id: "separator" },
+        {
+          id: "delete",
+          label: "Delete chat",
+          icon: Trash2,
+          danger: true,
+          onSelect: () => deleteChat(menu.chat.id),
+        },
+      ]
+    : [];
 
   return (
     <section className="chat-list">
       <header className="chat-list-header" data-tauri-drag-region>
         <h1 className="chat-list-title">Chats</h1>
         <div className="header-actions no-drag">
-          <button type="button" className="icon-button" title="New chat">
+          <button
+            type="button"
+            className="icon-button"
+            title="New chat"
+            onClick={() => setNewChatOpen(true)}
+          >
             <Plus size={24} />
           </button>
           <button type="button" className="icon-button" title="Menu">
@@ -75,6 +142,7 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
             chat={chat}
             selected={chat.id === selectedId}
             onSelect={() => onSelect(chat.id)}
+            onContextMenu={(event) => openMenu(event, chat)}
           />
         ))}
         {chats.length === 0 && (
@@ -89,6 +157,17 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
           </p>
         )}
       </div>
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuItems}
+          onClose={() => setMenu(null)}
+        />
+      )}
+
+      {newChatOpen && <NewChatModal onClose={() => setNewChatOpen(false)} />}
     </section>
   );
 }
@@ -97,9 +176,15 @@ interface ChatListItemProps {
   chat: ChatSummary;
   selected: boolean;
   onSelect: () => void;
+  onContextMenu: (event: ReactMouseEvent) => void;
 }
 
-function ChatListItem({ chat, selected, onSelect }: ChatListItemProps) {
+function ChatListItem({
+  chat,
+  selected,
+  onSelect,
+  onContextMenu,
+}: ChatListItemProps) {
   const isOwnLastMessage = chat.lastMessagePreview?.startsWith("You:") ?? false;
 
   return (
@@ -108,6 +193,7 @@ function ChatListItem({ chat, selected, onSelect }: ChatListItemProps) {
       role="button"
       tabIndex={0}
       onClick={onSelect}
+      onContextMenu={onContextMenu}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") onSelect();
       }}

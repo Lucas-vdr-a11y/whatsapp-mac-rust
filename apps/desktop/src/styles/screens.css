@@ -1,2 +1,501 @@
 /* Screens: calls, status, channels, communities.
  * Owned by the screens workstream. */
+
+/* ------------------------------------------------------------------ */
+/* Shared screen pieces                                                 */
+/* ------------------------------------------------------------------ */
+
+/* `.chat-list` is a grid item with `min-height: auto`; without this its
+ * min-content height grows the app row past 100vh and the list column gets
+ * clipped instead of scrolling. Scoped to screens so ChatList is untouched. */
+.chat-list.screen {
+  min-height: 0;
+}
+
+.screen-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 12px;
+}
+
+.screen-section-label {
+  padding: 16px 22px 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.screen-section-label.accent {
+  color: var(--accent-strong);
+}
+
+/* Entry rows: "Start new call", "Find channels", "New community". */
+.screen-entry {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  height: 72px;
+  padding: 0 12px 0 16px;
+  text-align: left;
+}
+
+.screen-entry:hover {
+  background: var(--bg-hover);
+}
+
+.screen-entry-icon {
+  flex: none;
+  width: 49px;
+  height: 49px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: rgba(0, 168, 132, 0.16);
+  color: var(--accent-strong);
+}
+
+.screen-entry-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.screen-entry-title {
+  font-size: var(--font-size-list-name);
+  color: var(--text-primary);
+}
+
+.screen-entry-hint {
+  font-size: var(--font-size-list-preview);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Empty state. */
+.screen-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 56px 32px;
+  text-align: center;
+}
+
+.screen-empty-icon {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 10px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--bg-header);
+  color: var(--text-secondary);
+}
+
+.screen-empty-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.screen-empty-hint {
+  margin: 0;
+  max-width: 260px;
+  font-size: 13.5px;
+  line-height: 19px;
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+/* Calls                                                                */
+/* ------------------------------------------------------------------ */
+
+.call-item {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  height: 72px;
+  padding: 0 12px 0 16px;
+}
+
+.call-item:hover {
+  background: var(--bg-hover);
+}
+
+.call-item-body {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.call-item-top,
+.call-item-bottom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.call-item-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-list-name);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.call-item-time {
+  flex: none;
+  font-size: var(--font-size-meta);
+  color: var(--text-secondary);
+}
+
+.call-status {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-size-list-preview);
+  color: var(--text-secondary);
+}
+
+.call-status svg {
+  flex: none;
+}
+
+.call-status.missed svg {
+  color: var(--danger);
+}
+
+.call-status.outgoing svg {
+  color: var(--accent-strong);
+}
+
+.call-status.incoming svg {
+  color: var(--link);
+}
+
+.call-status-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Row actions reveal on hover / keyboard focus. */
+.call-item-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.call-item-actions .icon-button {
+  width: 34px;
+  height: 34px;
+}
+
+.call-item:hover .call-item-actions,
+.call-item:focus-within .call-item-actions {
+  opacity: 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Status                                                               */
+/* ------------------------------------------------------------------ */
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  height: 72px;
+  padding: 0 12px 0 16px;
+}
+
+.status-item:hover {
+  background: var(--bg-hover);
+}
+
+.status-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.status-item-name {
+  font-size: var(--font-size-list-name);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-item-preview {
+  font-size: var(--font-size-list-preview);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ring around a 49px avatar: 3px gradient for unseen, 2px gray for viewed,
+ * dashed for the "add update" affordance. */
+.status-ring {
+  position: relative;
+  flex: none;
+  width: 55px;
+  height: 55px;
+  padding: 3px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: linear-gradient(150deg, var(--accent), var(--accent-strong));
+}
+
+.status-ring.viewed {
+  padding: 1px;
+  background: none;
+  border: 2px solid rgba(134, 150, 160, 0.4);
+}
+
+.status-ring.dashed {
+  padding: 1px;
+  background: none;
+  border: 2px dashed var(--text-muted);
+}
+
+.status-add-badge {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--bg-panel);
+  background: var(--accent);
+  color: var(--text-inverse);
+}
+
+.status-muted-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 22px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.status-muted-header:hover {
+  background: var(--bg-hover);
+}
+
+.status-muted-count {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--bg-input);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+.status-muted-chevron {
+  margin-left: auto;
+}
+
+/* ------------------------------------------------------------------ */
+/* Channels                                                             */
+/* ------------------------------------------------------------------ */
+
+.channels-lede {
+  margin: 0;
+  padding: 4px 22px 14px;
+  font-size: 13.5px;
+  line-height: 19px;
+  color: var(--text-secondary);
+}
+
+.channel-item {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  height: 72px;
+  padding: 0 12px 0 16px;
+}
+
+.channel-item:hover {
+  background: var(--bg-hover);
+}
+
+.channel-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.channel-top,
+.channel-bottom {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.channel-name {
+  min-width: 0;
+  font-size: var(--font-size-list-name);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channel-verified {
+  flex: none;
+  color: var(--accent-strong);
+}
+
+.channel-time {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--font-size-meta);
+  color: var(--text-secondary);
+}
+
+.channel-bottom {
+  font-size: var(--font-size-list-preview);
+  color: var(--text-secondary);
+}
+
+.channel-followers {
+  flex: none;
+}
+
+.channel-sep {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.channel-preview {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------------------------ */
+/* Communities                                                          */
+/* ------------------------------------------------------------------ */
+
+.community-card {
+  margin: 2px 12px 10px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-header);
+  overflow: hidden;
+}
+
+.community-card-header {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.community-card-header:hover {
+  background: var(--bg-hover);
+}
+
+.community-avatar {
+  border-radius: 12px;
+}
+
+.community-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.community-name {
+  font-size: var(--font-size-list-name);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.community-meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.community-chevron {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.community-groups {
+  padding: 2px 0;
+  border-top: 1px solid var(--divider);
+}
+
+.community-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 12px 0 18px;
+}
+
+.community-group:hover {
+  background: var(--bg-hover);
+}
+
+.community-group-avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+}
+
+.community-group-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

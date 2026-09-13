@@ -35,6 +35,15 @@ interface AppState {
   appendMessage: (message: Message) => void;
   sendText: (chatId: Jid, text: string) => void;
 
+  /** Local, in-memory chat-list mutations (persistence lands with the core). */
+  togglePinned: (id: Jid) => void;
+  toggleMuted: (id: Jid) => void;
+  archiveChat: (id: Jid) => void;
+  markRead: (id: Jid) => void;
+  deleteChat: (id: Jid) => void;
+  /** Selects an existing chat or creates an empty one for a new contact. */
+  startChat: (id: Jid, name: string, isGroup?: boolean) => void;
+
   setConnection: (connection: ConnectionState) => void;
   setQrCode: (code: string | null) => void;
   setPairCode: (code: string | null) => void;
@@ -44,57 +53,107 @@ interface AppState {
 /** In a plain browser we run on mock data; inside Tauri the core fills state. */
 const mockMode = !isTauri();
 
-export const useAppStore = create<AppState>((set, get) => ({
-  chats: mockMode ? MOCK_CHATS : [],
-  messages: mockMode ? MOCK_MESSAGES : {},
-  selectedChatId: null,
-  query: "",
-  filter: "all",
+export const useAppStore = create<AppState>((set, get) => {
+  /** Applies a patch to a single chat, leaving the rest of the list alone. */
+  const patchChat = (
+    id: Jid,
+    patch: (chat: ChatSummary) => Partial<ChatSummary>,
+  ) =>
+    set((state) => ({
+      chats: state.chats.map((chat) =>
+        chat.id === id ? { ...chat, ...patch(chat) } : chat,
+      ),
+    }));
 
-  connection: mockMode ? "connected" : "disconnected",
-  paired: mockMode,
-  qrCode: null,
-  pairCode: null,
+  return {
+    chats: mockMode ? MOCK_CHATS : [],
+    messages: mockMode ? MOCK_MESSAGES : {},
+    selectedChatId: null,
+    query: "",
+    filter: "all",
 
-  selectChat: (id) => set({ selectedChatId: id }),
-  setQuery: (query) => set({ query }),
-  setFilter: (filter) => set({ filter }),
+    connection: mockMode ? "connected" : "disconnected",
+    paired: mockMode,
+    qrCode: null,
+    pairCode: null,
 
-  appendMessage: (message) =>
-    set((state) => {
-      const existing = state.messages[message.chatId] ?? [];
-      if (existing.some((m) => m.id === message.id)) return state;
-      return {
-        messages: {
-          ...state.messages,
-          [message.chatId]: [...existing, message],
-        },
-      };
-    }),
+    selectChat: (id) => set({ selectedChatId: id }),
+    setQuery: (query) => set({ query }),
+    setFilter: (filter) => set({ filter }),
 
-  sendText: (chatId, text) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
+    appendMessage: (message) =>
+      set((state) => {
+        const existing = state.messages[message.chatId] ?? [];
+        if (existing.some((m) => m.id === message.id)) return state;
+        return {
+          messages: {
+            ...state.messages,
+            [message.chatId]: [...existing, message],
+          },
+        };
+      }),
 
-    // Optimistic local echo. TODO(M1): forward to the core via
-    // `invokeCore("send_text", { chatId, text })` and reconcile the real id.
-    get().appendMessage({
-      id: `local-${crypto.randomUUID()}`,
-      chatId,
-      senderId: "me",
-      fromMe: true,
-      timestamp: Math.floor(Date.now() / 1000),
-      kind: "text",
-      text: trimmed,
-      status: "pending",
-    });
-  },
+    sendText: (chatId, text) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
 
-  setConnection: (connection) => set({ connection }),
-  setQrCode: (qrCode) => set({ qrCode }),
-  setPairCode: (pairCode) => set({ pairCode }),
-  markPaired: () => set({ paired: true, qrCode: null, pairCode: null }),
-}));
+      // Optimistic local echo. TODO(M1): forward to the core via
+      // `invokeCore("send_text", { chatId, text })` and reconcile the real id.
+      get().appendMessage({
+        id: `local-${crypto.randomUUID()}`,
+        chatId,
+        senderId: "me",
+        fromMe: true,
+        timestamp: Math.floor(Date.now() / 1000),
+        kind: "text",
+        text: trimmed,
+        status: "pending",
+      });
+    },
+
+    togglePinned: (id) => patchChat(id, (chat) => ({ pinned: !chat.pinned })),
+    toggleMuted: (id) => patchChat(id, (chat) => ({ muted: !chat.muted })),
+    archiveChat: (id) => patchChat(id, () => ({ isArchived: true })),
+    markRead: (id) => patchChat(id, () => ({ unreadCount: 0 })),
+
+    deleteChat: (id) =>
+      set((state) => {
+        const messages = { ...state.messages };
+        delete messages[id];
+        return {
+          chats: state.chats.filter((chat) => chat.id !== id),
+          messages,
+          selectedChatId:
+            state.selectedChatId === id ? null : state.selectedChatId,
+        };
+      }),
+
+    startChat: (id, name, isGroup = false) =>
+      set((state) => {
+        if (state.chats.some((chat) => chat.id === id)) {
+          return { selectedChatId: id };
+        }
+
+        const chat: ChatSummary = {
+          id,
+          name,
+          lastMessagePreview: null,
+          lastActivityTs: Math.floor(Date.now() / 1000),
+          unreadCount: 0,
+          muted: false,
+          pinned: false,
+          isGroup,
+          isArchived: false,
+        };
+        return { chats: [chat, ...state.chats], selectedChatId: id };
+      }),
+
+    setConnection: (connection) => set({ connection }),
+    setQrCode: (qrCode) => set({ qrCode }),
+    setPairCode: (pairCode) => set({ pairCode }),
+    markPaired: () => set({ paired: true, qrCode: null, pairCode: null }),
+  };
+});
 
 /** Chats after applying the search query and the active filter. */
 export function selectVisibleChats(state: AppState): ChatSummary[] {
@@ -102,6 +161,7 @@ export function selectVisibleChats(state: AppState): ChatSummary[] {
 
   return state.chats
     .filter((chat) => {
+      if (chat.isArchived) return false;
       if (state.filter === "unread" && chat.unreadCount === 0) return false;
       if (state.filter === "groups" && !chat.isGroup) return false;
       if (query && !chat.name.toLowerCase().includes(query)) return false;

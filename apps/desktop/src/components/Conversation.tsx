@@ -3,6 +3,8 @@ import { initials } from "../lib/names";
 import { formatBubbleTime, formatDateDivider } from "../lib/time";
 import type { ChatSummary, Message, MessageStatus } from "../lib/types";
 import { useAppStore } from "../store/app";
+import { AttachmentMenu, type AttachmentKind } from "./AttachmentMenu";
+import { EmojiPicker } from "./EmojiPicker";
 import {
   Check,
   CheckCheck,
@@ -165,7 +167,10 @@ function StatusTick({ status }: { status: MessageStatus }) {
 
 function Composer({ onSend }: { onSend: (text: string) => void }) {
   const [text, setText] = useState("");
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLElement>(null);
 
   const resize = () => {
     const element = textareaRef.current;
@@ -174,20 +179,89 @@ function Composer({ onSend }: { onSend: (text: string) => void }) {
     element.style.height = `${Math.min(element.scrollHeight, 120)}px`;
   };
 
+  // Clicking outside the composer dismisses whichever panel is open.
+  useEffect(() => {
+    if (!emojiOpen && !attachOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!composerRef.current?.contains(event.target as Node)) {
+        setEmojiOpen(false);
+        setAttachOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [emojiOpen, attachOpen]);
+
   const submit = () => {
     const value = text.trim();
     if (!value) return;
     onSend(value);
     setText("");
+    setEmojiOpen(false);
+    setAttachOpen(false);
     requestAnimationFrame(resize);
   };
 
+  const insertEmoji = (emoji: string) => {
+    const element = textareaRef.current;
+    const start = element?.selectionStart ?? text.length;
+    const end = element?.selectionEnd ?? text.length;
+    setText(`${text.slice(0, start)}${emoji}${text.slice(end)}`);
+    requestAnimationFrame(() => {
+      const cursor = start + emoji.length;
+      element?.focus();
+      element?.setSelectionRange(cursor, cursor);
+      resize();
+    });
+  };
+
+  const toggleEmoji = () => {
+    setEmojiOpen((open) => !open);
+    setAttachOpen(false);
+  };
+
+  const toggleAttach = () => {
+    setAttachOpen((open) => !open);
+    setEmojiOpen(false);
+  };
+
+  // The actual attachment flows land with a later milestone; for now the
+  // menu only reports the chosen kind and dismisses itself.
+  const handleAttach = (_kind: AttachmentKind) => {
+    setAttachOpen(false);
+  };
+
   return (
-    <footer className="composer">
-      <button type="button" className="icon-button" title="Emoji">
+    <footer className="composer" ref={composerRef}>
+      {emojiOpen && (
+        <EmojiPicker
+          onPick={insertEmoji}
+          onClose={() => setEmojiOpen(false)}
+        />
+      )}
+      {attachOpen && (
+        <AttachmentMenu
+          onPick={handleAttach}
+          onClose={() => setAttachOpen(false)}
+        />
+      )}
+
+      <button
+        type="button"
+        className="icon-button"
+        title="Emoji"
+        aria-expanded={emojiOpen}
+        onClick={toggleEmoji}
+      >
         <Smile size={24} />
       </button>
-      <button type="button" className="icon-button" title="Attach">
+      <button
+        type="button"
+        className="icon-button"
+        title="Attach"
+        aria-expanded={attachOpen}
+        onClick={toggleAttach}
+      >
         <Paperclip size={24} />
       </button>
 

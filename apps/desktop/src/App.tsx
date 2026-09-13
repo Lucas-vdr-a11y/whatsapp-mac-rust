@@ -4,7 +4,11 @@ import { ChatList } from "./components/ChatList";
 import { Conversation, EmptyConversation } from "./components/Conversation";
 import { NavigationRail, type RailSection } from "./components/NavigationRail";
 import { PairingScreen } from "./components/PairingScreen";
-import { SectionPlaceholder } from "./components/SectionPlaceholder";
+import { CallsScreen } from "./components/screens/CallsScreen";
+import { ChannelsScreen } from "./components/screens/ChannelsScreen";
+import { ComingSoonScreen } from "./components/screens/ComingSoonScreen";
+import { CommunitiesScreen } from "./components/screens/CommunitiesScreen";
+import { StatusScreen } from "./components/screens/StatusScreen";
 import { useCoreBridge } from "./lib/bridge";
 import { selectVisibleChats, useAppStore } from "./store/app";
 
@@ -50,8 +54,16 @@ export default function App() {
           selectedId={selectedChatId}
           onSelect={selectChat}
         />
+      ) : section === "status" ? (
+        <StatusScreen />
+      ) : section === "channels" ? (
+        <ChannelsScreen />
+      ) : section === "communities" ? (
+        <CommunitiesScreen />
+      ) : section === "calls" ? (
+        <CallsScreen />
       ) : (
-        <SectionPlaceholder section={section} />
+        <ComingSoonScreen section={section} />
       )}
 
       {selectedChat ? (
