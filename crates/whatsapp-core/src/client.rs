@@ -643,7 +643,9 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                     id: chat_id.clone(),
                     name,
                     last_message_preview: None,
-                    last_activity_ts: conversation.last_msg_timestamp.unwrap_or(0) / 1_000,
+                    last_activity_ts: normalize_timestamp(
+                        conversation.last_msg_timestamp.unwrap_or(0),
+                    ),
                     unread_count: conversation.unread_count.unwrap_or(0),
                     muted: false,
                     pinned: false,
@@ -714,6 +716,17 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
     );
 }
 
+/// WhatsApp history timestamps are usually milliseconds, but some server
+/// entries carry seconds. Normalize both to Unix seconds.
+fn normalize_timestamp(raw: u64) -> u64 {
+    const MILLIS_THRESHOLD: u64 = 10_000_000_000; // year 2286 in seconds
+    if raw > MILLIS_THRESHOLD {
+        raw / 1_000
+    } else {
+        raw
+    }
+}
+
 /// Convert one history-sync message into our domain type.
 fn convert_history_message(info: &wa::WebMessageInfo) -> Option<Message> {
     let key = info.key.as_option()?;
@@ -741,7 +754,7 @@ fn convert_history_message(info: &wa::WebMessageInfo) -> Option<Message> {
             sender
         },
         from_me,
-        timestamp: info.message_timestamp.unwrap_or(0) / 1_000,
+        timestamp: normalize_timestamp(info.message_timestamp.unwrap_or(0)),
         kind: body.map(classify).unwrap_or(MessageKind::Unsupported),
         text: body.and_then(|message| message.text_content().map(str::to_owned)),
         status: if from_me {
@@ -934,5 +947,13 @@ mod tests {
     fn skips_history_messages_without_key_or_chat() {
         let info = wa::WebMessageInfo::default();
         assert!(convert_history_message(&info).is_none());
+    }
+
+    #[test]
+    fn normalizes_history_timestamps() {
+        // Seconds stay seconds; milliseconds convert down.
+        assert_eq!(normalize_timestamp(1_700_000_000), 1_700_000_000);
+        assert_eq!(normalize_timestamp(1_700_000_000_000), 1_700_000_000);
+        assert_eq!(normalize_timestamp(0), 0);
     }
 }
