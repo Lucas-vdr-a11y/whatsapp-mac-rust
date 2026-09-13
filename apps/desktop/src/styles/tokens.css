@@ -1,0 +1,117 @@
+/*
+ * Design tokens.
+ *
+ * Values mirror the current WhatsApp desktop design system. Both themes are
+ * provided; the app defaults to dark, matching macOS appearance settings later.
+ * No proprietary assets are referenced here.
+ */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg-rail: #111b21;
+  --bg-panel: #111b21;
+  --bg-header: #202c33;
+  --bg-chat: #0b141a;
+  --bg-input: #2a3942;
+  --bg-hover: rgba(233, 237, 239, 0.05);
+  --bg-active: #2a3942;
+  --bg-selected: #2a3942;
+  --bg-modal: #111b21;
+  --bg-badge: #00a884;
+
+  /* Text */
+  --text-primary: #e9edef;
+  --text-secondary: #8696a0;
+  --text-muted: #667781;
+  --text-inverse: #111b21;
+
+  /* Icons */
+  --icon: #aebac1;
+  --icon-strong: #e9edef;
+
+  /* Brand */
+  --accent: #00a884;
+  --accent-strong: #06cf9c;
+
+  /* Bubbles */
+  --bubble-in: #202c33;
+  --bubble-out: #005c4b;
+  --bubble-text: #e9edef;
+
+  /* Semantic */
+  --link: #53bdeb;
+  --divider: rgba(134, 150, 160, 0.15);
+  --danger: #f15c6d;
+  --warning: #ffbc38;
+  --tick-read: #53bdeb;
+  --unread-badge: #00a884;
+  --unread-badge-text: #111b21;
+
+  /* Elevation */
+  --shadow-bubble: 0 1px 0.5px rgba(11, 20, 26, 0.13);
+  --shadow-modal: 0 12px 44px rgba(11, 20, 26, 0.6);
+
+  /* Geometry */
+  --rail-width: 64px;
+  --list-width: 400px;
+  --header-height: 59px;
+  --composer-height: 62px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial,
+    sans-serif;
+  --font-size-chat-title: 22px;
+  --font-size-list-name: 17px;
+  --font-size-list-preview: 14px;
+  --font-size-message: 14.2px;
+  --font-size-meta: 12px;
+  --font-size-time: 11px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-rail: #ffffff;
+  --bg-panel: #ffffff;
+  --bg-header: #f0f2f5;
+  --bg-chat: #efeae2;
+  --bg-input: #ffffff;
+  --bg-hover: rgba(11, 20, 26, 0.05);
+  --bg-active: #e9edef;
+  --bg-selected: #f0f2f5;
+  --bg-modal: #ffffff;
+  --bg-badge: #00a884;
+
+  --text-primary: #111b21;
+  --text-secondary: #667781;
+  --text-muted: #8696a0;
+  --text-inverse: #ffffff;
+
+  --icon: #54656f;
+  --icon-strong: #111b21;
+
+  --accent: #00a884;
+  --accent-strong: #06cf9c;
+
+  --bubble-in: #ffffff;
+  --bubble-out: #d9fdd3;
+  --bubble-text: #111b21;
+
+  --link: #027eb5;
+  --divider: #e9edef;
+  --danger: #ea0038;
+  --tick-read: #53bdeb;
+  --unread-badge: #00a884;
+  --unread-badge-text: #ffffff;
+
+  --shadow-bubble: 0 1px 0.5px rgba(11, 20, 26, 0.13);
+  --shadow-modal: 0 12px 44px rgba(11, 20, 26, 0.26);
+}

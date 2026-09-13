@@ -1,0 +1,177 @@
+/**
+ * Browser-only mock data so the UI can be developed and reviewed without the
+ * Rust host. In Tauri builds the store starts empty and is filled from the
+ * core's event stream.
+ */
+
+import type { ChatSummary, Message } from "../lib/types";
+
+const now = Math.floor(Date.now() / 1000);
+const minute = 60;
+const hour = 60 * minute;
+
+export const MOCK_CHATS: ChatSummary[] = [
+  {
+    id: "alice@s.whatsapp.net",
+    name: "Alice",
+    lastMessagePreview: "See you tomorrow!",
+    lastActivityTs: now - 4 * minute,
+    unreadCount: 2,
+    muted: false,
+    pinned: true,
+    isGroup: false,
+    isArchived: false,
+  },
+  {
+    id: "weekend-trip@g.us",
+    name: "Weekend Trip",
+    lastMessagePreview: "Sander: I'll bring the tent",
+    lastActivityTs: now - 32 * minute,
+    unreadCount: 5,
+    muted: false,
+    pinned: true,
+    isGroup: true,
+    isArchived: false,
+  },
+  {
+    id: "bob@s.whatsapp.net",
+    name: "Bob",
+    lastMessagePreview: "Thanks for the update",
+    lastActivityTs: now - 2 * hour,
+    unreadCount: 0,
+    muted: false,
+    pinned: false,
+    isGroup: false,
+    isArchived: false,
+  },
+  {
+    id: "design-team@g.us",
+    name: "Design Team",
+    lastMessagePreview: "You: Uploading the new mockups now",
+    lastActivityTs: now - 5 * hour,
+    unreadCount: 0,
+    muted: true,
+    pinned: false,
+    isGroup: true,
+    isArchived: false,
+  },
+  {
+    id: "marieke@s.whatsapp.net",
+    name: "Marieke",
+    lastMessagePreview: "Haha that's great",
+    lastActivityTs: now - 26 * hour,
+    unreadCount: 0,
+    muted: false,
+    pinned: false,
+    isGroup: false,
+    isArchived: false,
+  },
+  {
+    id: "book-club@g.us",
+    name: "Book Club",
+    lastMessagePreview: "Daan: Chapter 12 discussion next week?",
+    lastActivityTs: now - 3 * 24 * hour,
+    unreadCount: 0,
+    muted: true,
+    pinned: false,
+    isGroup: true,
+    isArchived: false,
+  },
+];
+
+export const MOCK_MESSAGES: Record<string, Message[]> = {
+  "alice@s.whatsapp.net": [
+    {
+      id: "m1",
+      chatId: "alice@s.whatsapp.net",
+      senderId: "alice@s.whatsapp.net",
+      fromMe: false,
+      timestamp: now - 3 * hour,
+      kind: "text",
+      text: "Hey! Are we still on for tomorrow?",
+      status: "read",
+    },
+    {
+      id: "m2",
+      chatId: "alice@s.whatsapp.net",
+      senderId: "me",
+      fromMe: true,
+      timestamp: now - 3 * hour + 40,
+      kind: "text",
+      text: "Yes! 10:30 at the usual place?",
+      status: "read",
+    },
+    {
+      id: "m3",
+      chatId: "alice@s.whatsapp.net",
+      senderId: "alice@s.whatsapp.net",
+      fromMe: false,
+      timestamp: now - 2 * hour,
+      kind: "text",
+      text: "Perfect. I'll bring the tickets.",
+      status: "sent",
+    },
+    {
+      id: "m4",
+      chatId: "alice@s.whatsapp.net",
+      senderId: "me",
+      fromMe: true,
+      timestamp: now - 40 * minute,
+      kind: "text",
+      text: "Great, see you tomorrow!",
+      status: "delivered",
+    },
+    {
+      id: "m5",
+      chatId: "alice@s.whatsapp.net",
+      senderId: "alice@s.whatsapp.net",
+      fromMe: false,
+      timestamp: now - 4 * minute,
+      kind: "text",
+      text: "See you tomorrow!",
+      status: "read",
+    },
+  ],
+  "weekend-trip@g.us": [
+    {
+      id: "g1",
+      chatId: "weekend-trip@g.us",
+      senderId: "sander@s.whatsapp.net",
+      fromMe: false,
+      timestamp: now - 2 * hour,
+      kind: "text",
+      text: "Weather looks good for Saturday.",
+      status: "read",
+    },
+    {
+      id: "g2",
+      chatId: "weekend-trip@g.us",
+      senderId: "me",
+      fromMe: true,
+      timestamp: now - 90 * minute,
+      kind: "text",
+      text: "I'll take care of the food.",
+      status: "read",
+    },
+    {
+      id: "g3",
+      chatId: "weekend-trip@g.us",
+      senderId: "marieke@s.whatsapp.net",
+      fromMe: false,
+      timestamp: now - 45 * minute,
+      kind: "text",
+      text: "Who has the camping gear?",
+      status: "read",
+    },
+    {
+      id: "g4",
+      chatId: "weekend-trip@g.us",
+      senderId: "sander@s.whatsapp.net",
+      fromMe: false,
+      timestamp: now - 32 * minute,
+      kind: "text",
+      text: "I'll bring the tent",
+      status: "read",
+    },
+  ],
+};

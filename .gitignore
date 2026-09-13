@@ -1,0 +1,22 @@
+# Rust
+/target
+**/target/
+
+# Node
+node_modules/
+**/dist/
+**/.vite/
+
+# Tauri
+apps/desktop/src-tauri/gen/
+
+# macOS
+.DS_Store
+
+# Env / secrets
+.env
+.env.local
+*.pem
+
+# Logs
+*.log
