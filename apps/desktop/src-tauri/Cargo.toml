@@ -1,0 +1,26 @@
+[package]
+name = "rustwa"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "RustWA desktop host — Tauri shell for the Rust WhatsApp client"
+
+[lib]
+name = "rustwa_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+whatsapp-core = { path = "../../../crates/whatsapp-core" }
+
+[lints]
+workspace = true
