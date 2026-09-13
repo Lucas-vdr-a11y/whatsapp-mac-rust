@@ -1,49 +1,36 @@
 /**
  * Status screen: post a text status ("My status") and browse the status
  * updates contacts posted in the last 24 hours. Updates arrive as messages on
- * `status@broadcast` and are served by `statuses_list`; tapping a row opens a
- * fullscreen viewer and reports `status_viewed`. Plain-browser runs keep a
- * small demo list so the screen can be reviewed without the Rust host.
+ * `status@broadcast` and are served by `statuses_list`; tapping a sender's row
+ * opens the fullscreen viewer (`components/status/StatusViewer`) and reports
+ * `status_viewed`. Plain-browser runs keep a small demo list so the screen can
+ * be reviewed without the Rust host.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   Camera,
-  ChevronLeft,
-  ChevronRight,
+  Image as ImageIcon,
+  Mic,
   Pencil,
   Plus,
   UserRound,
+  Video,
   X,
 } from "lucide-react";
 import { invokeCore, isTauri } from "../../lib/ipc";
 import { t, useTranslation } from "../../lib/i18n";
 import { initials } from "../../lib/names";
 import { useAppStore } from "../../store/app";
+import { senderName, statusTime, updatePreview } from "../status/format";
+import {
+  STATUS_TTL_SECS,
+  type StatusGroup,
+  type StatusKind,
+  type StatusUpdate,
+} from "../status/types";
+import { StatusViewer } from "../status/StatusViewer";
 import { EmptyState, ScreenHeader } from "./shared";
-
-type StatusKind = "text" | "image" | "video" | "voice" | "unknown";
-
-/** Mirror of the core's `StatusUpdate` (camelCase over IPC). */
-interface StatusUpdate {
-  id: string;
-  sender: string;
-  timestamp: number;
-  kind: StatusKind;
-  text: string | null;
-  backgroundArgb: number | null;
-  expiresAt: number;
-  viewed: boolean;
-}
-
-/** Updates of one sender, grouped for the list. Newest first. */
-interface StatusGroup {
-  sender: string;
-  updates: StatusUpdate[];
-  latest: StatusUpdate;
-  unviewed: number;
-}
 
 /** Six status backgrounds drawn from the app palette. The core receives the
  * ARGB value; `css` mirrors it for the swatch. */
@@ -57,7 +44,6 @@ const STATUS_BACKGROUNDS = [
 ] as const;
 
 const STATUS_MAX_LENGTH = 700;
-const STATUS_TTL_SECS = 24 * 60 * 60;
 
 /** Browser-preview rows; Tauri builds start empty and fill from the core. */
 function demoUpdates(): StatusUpdate[] {
@@ -127,53 +113,6 @@ function friendlyError(error: unknown, fallback: string): string {
     return t("status.unavailable");
   }
   return raw;
-}
-
-/** 0xAARRGGBB background to a CSS color (alpha ignored; the viewer is dark). */
-function argbToCss(argb: number | null): string {
-  const value = (argb ?? 0xff144d37) >>> 0;
-  return `#${(value & 0xffffff).toString(16).padStart(6, "0")}`;
-}
-
-/** Placeholder copy for updates whose text is not available. */
-function updateLabel(kind: StatusKind): string {
-  switch (kind) {
-    case "image":
-      return t("media.photo");
-    case "video":
-      return t("media.video");
-    case "voice":
-      return t("media.voice");
-    default:
-      return t("status.updateLabel");
-  }
-}
-
-function updatePreview(update: StatusUpdate): string {
-  const text = update.text?.trim();
-  return text ? text : updateLabel(update.kind);
-}
-
-/** "09:41" today, "Yesterday, 21:03" inside the 24 h window. */
-function statusTime(unixSeconds: number): string {
-  const date = new Date(unixSeconds * 1000);
-  const now = new Date();
-  const time = date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  return sameDay ? time : t("status.yesterday", { time });
-}
-
-/** Contact name when the chat list knows it, otherwise the JID user part. */
-function senderName(sender: string, names: Record<string, string>): string {
-  const known = names[sender];
-  if (known) return known;
-  return sender.split("@")[0] || sender;
 }
 
 export function StatusScreen() {
@@ -255,6 +194,7 @@ export function StatusScreen() {
     }
   }, []);
 
+  /** Open a sender's updates, preferring their first unviewed one. */
   const openViewer = (group: StatusGroup) => {
     const firstUnviewed = group.updates.findIndex((update) => !update.viewed);
     const index = firstUnviewed >= 0 ? firstUnviewed : 0;
@@ -262,35 +202,16 @@ export function StatusScreen() {
     markViewed(group.updates[index]);
   };
 
-  const navigateViewer = (delta: number) => {
-    if (!viewer) return;
-    const index = viewer.index + delta;
-    if (index < 0 || index >= viewer.group.updates.length) return;
-    setViewer({ ...viewer, index });
-    markViewed(viewer.group.updates[index]);
-  };
-
-  useEffect(() => {
-    if (!viewer) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setViewer(null);
-      } else if (event.key === "ArrowLeft" && viewer.index > 0) {
-        const index = viewer.index - 1;
-        setViewer({ ...viewer, index });
-        markViewed(viewer.group.updates[index]);
-      } else if (
-        event.key === "ArrowRight" &&
-        viewer.index < viewer.group.updates.length - 1
-      ) {
-        const index = viewer.index + 1;
-        setViewer({ ...viewer, index });
-        markViewed(viewer.group.updates[index]);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [viewer, markViewed]);
+  const navigateViewer = useCallback(
+    (index: number) => {
+      if (!viewer) return;
+      const update = viewer.group.updates[index];
+      if (!update) return;
+      setViewer({ ...viewer, index });
+      markViewed(update);
+    },
+    [viewer, markViewed],
+  );
 
   const groups = useMemo(() => {
     const bySender = new Map<string, StatusUpdate[]>();
@@ -351,11 +272,6 @@ export function StatusScreen() {
       setPosting(false);
     }
   };
-
-  const viewedUpdate = viewer ? viewer.group.updates[viewer.index] : null;
-  const viewerName = viewer
-    ? senderName(viewer.group.sender, names)
-    : "";
 
   return (
     <section className="chat-list screen">
@@ -456,101 +372,15 @@ export function StatusScreen() {
         ))}
       </div>
 
-      {viewer && viewedUpdate
-        ? createPortal(
-            <div
-              className="status-viewer"
-              role="dialog"
-              aria-modal="true"
-              aria-label={t("status.viewerAria", { name: viewerName })}
-              onClick={() => setViewer(null)}
-            >
-              <button
-                type="button"
-                className="status-viewer-close"
-                title={t("common.close")}
-                aria-label={t("common.close")}
-                onClick={() => setViewer(null)}
-              >
-                <X size={26} />
-              </button>
-
-              <div
-                className="status-viewer-stage"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="status-viewer-progress" aria-hidden="true">
-                  {viewer.group.updates.map((update, index) => (
-                    <span
-                      key={update.id}
-                      className={`status-viewer-segment${
-                        index <= viewer.index ? " active" : ""
-                      }`}
-                    />
-                  ))}
-                </div>
-
-                <header className="status-viewer-header">
-                  <span className="status-ring viewed">
-                    <span className="avatar">{initials(viewerName)}</span>
-                  </span>
-                  <span className="status-viewer-meta">
-                    <span className="status-viewer-name">{viewerName}</span>
-                    <span className="status-viewer-time">
-                      {statusTime(viewedUpdate.timestamp)}
-                    </span>
-                  </span>
-                </header>
-
-                <div
-                  className="status-viewer-card"
-                  style={{ background: argbToCss(viewedUpdate.backgroundArgb) }}
-                >
-                  <p className="status-viewer-text">
-                    {viewedUpdate.text?.trim() || updateLabel(viewedUpdate.kind)}
-                  </p>
-                  {!viewedUpdate.text && viewedUpdate.kind !== "text" ? (
-                    <p className="status-viewer-hint">
-                      {t("status.mediaUnavailable")}
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-
-              {viewer.group.updates.length > 1 ? (
-                <>
-                  <button
-                    type="button"
-                    className="status-viewer-nav prev"
-                    title={t("status.previousUpdate")}
-                    aria-label={t("status.previousUpdate")}
-                    disabled={viewer.index === 0}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      navigateViewer(-1);
-                    }}
-                  >
-                    <ChevronLeft size={26} />
-                  </button>
-                  <button
-                    type="button"
-                    className="status-viewer-nav next"
-                    title={t("status.nextUpdate")}
-                    aria-label={t("status.nextUpdate")}
-                    disabled={viewer.index >= viewer.group.updates.length - 1}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      navigateViewer(1);
-                    }}
-                  >
-                    <ChevronRight size={26} />
-                  </button>
-                </>
-              ) : null}
-            </div>,
-            document.body,
-          )
-        : null}
+      {viewer ? (
+        <StatusViewer
+          group={viewer.group}
+          index={viewer.index}
+          name={senderName(viewer.group.sender, names)}
+          onClose={() => setViewer(null)}
+          onNavigate={navigateViewer}
+        />
+      ) : null}
 
       {composerOpen ? (
         <div className="modal-backdrop" onMouseDown={closeComposer}>
@@ -646,6 +476,20 @@ export function StatusScreen() {
   );
 }
 
+/** Small glyph for the newest update's kind (localization-free). */
+function LatestKindIcon({ kind }: { kind: StatusKind }) {
+  switch (kind) {
+    case "image":
+      return <ImageIcon size={14} className="status-item-kind" aria-hidden="true" />;
+    case "video":
+      return <Video size={14} className="status-item-kind" aria-hidden="true" />;
+    case "voice":
+      return <Mic size={14} className="status-item-kind" aria-hidden="true" />;
+    default:
+      return null;
+  }
+}
+
 /** One sender row: ring, name, newest update preview and time. */
 function StatusGroupRow({
   group,
@@ -683,6 +527,7 @@ function StatusGroupRow({
           ) : null}
         </span>
         <span className="status-item-preview">
+          <LatestKindIcon kind={group.latest.kind} />
           {statusTime(group.latest.timestamp)} · {updatePreview(group.latest)}
         </span>
       </span>

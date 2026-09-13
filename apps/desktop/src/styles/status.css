@@ -1,0 +1,103 @@
+/* Status screen: sender rows and the fullscreen media viewer.
+ * Owned by the status workstream. Extends the base status pieces in
+ * screens.css (ring, composer, viewer chrome) with the media stage and the
+ * small list glyph. */
+
+/* The viewer is fullscreen; keep the page behind it from scrolling. */
+body.status-viewer-open {
+  overflow: hidden;
+}
+
+/* The media stage is a little wider than the text card. */
+.status-viewer-stage.media {
+  width: min(620px, 100%);
+}
+
+/* Glyph in front of a sender row's preview (photo/video/voice). */
+.status-item-kind {
+  margin-right: 5px;
+  vertical-align: -2px;
+  color: var(--text-secondary);
+}
+
+/* Thin bar under the per-update segments: the share of the 24 h window the
+ * shown update still has left, captured when it became visible. */
+.status-viewer-lifetime {
+  height: 2px;
+  margin: 0 4px 12px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.status-viewer-lifetime span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.65);
+  transition: width 240ms ease;
+}
+
+/* Media card: black stage, no padding, media keeps its aspect ratio. */
+.status-viewer-card.media {
+  padding: 0;
+  background: #000;
+}
+
+.status-viewer-card.media .status-viewer-image,
+.status-viewer-card.media .status-viewer-video {
+  display: block;
+  max-width: 100%;
+  max-height: min(72vh, 640px);
+  object-fit: contain;
+  background: #000;
+}
+
+.status-viewer-card.media .status-viewer-video {
+  width: 100%;
+}
+
+/* Voice statuses are a compact player, not a full-height stage. */
+.status-viewer-card.media.voice {
+  min-height: 0;
+  padding: 28px 24px;
+  background: #101111;
+}
+
+.status-viewer-audio {
+  width: min(320px, 100%);
+}
+
+.status-viewer-caption {
+  padding: 14px 20px 16px;
+  font-size: 14.5px;
+  line-height: 20px;
+  color: #fff;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* Loading spinner / retry affordance while no local file exists yet. */
+.status-viewer-media-state,
+.status-viewer-retry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.status-viewer-retry {
+  cursor: pointer;
+}
+
+.status-viewer-retry:hover {
+  color: #fff;
+}
+
+.status-viewer-retry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
