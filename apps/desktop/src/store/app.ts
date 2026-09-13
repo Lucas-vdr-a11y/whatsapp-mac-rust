@@ -1,7 +1,7 @@
 /** Application store. The single source of truth for the UI. */
 
 import { create } from "zustand";
-import { isTauri } from "../lib/ipc";
+import { invokeCore, isTauri } from "../lib/ipc";
 import type {
   ChatSummary,
   ConnectionState,
@@ -16,6 +16,8 @@ interface AppState {
   chats: ChatSummary[];
   /** Messages per chat id, oldest first. */
   messages: Record<Jid, Message[]>;
+  /** Chats whose history has been fetched from the core. */
+  loadedChatIds: Record<Jid, boolean>;
   selectedChatId: Jid | null;
   query: string;
   filter: ChatFilter;
@@ -48,6 +50,13 @@ interface AppState {
   setQrCode: (code: string | null) => void;
   setPairCode: (code: string | null) => void;
   markPaired: (jid: Jid) => void;
+
+  /** Replace the chat list with the core's view. */
+  setChats: (chats: ChatSummary[]) => void;
+  /** Replace one chat's history with the core's view. */
+  setMessages: (chatId: Jid, messages: Message[]) => void;
+  /** Fetch a chat's history from the core, once. */
+  loadMessages: (chatId: Jid) => void;
 }
 
 /** In a plain browser we run on mock data; inside Tauri the core fills state. */
@@ -68,6 +77,7 @@ export const useAppStore = create<AppState>((set, get) => {
   return {
     chats: mockMode ? MOCK_CHATS : [],
     messages: mockMode ? MOCK_MESSAGES : {},
+    loadedChatIds: {},
     selectedChatId: null,
     query: "",
     filter: "all",
@@ -97,9 +107,9 @@ export const useAppStore = create<AppState>((set, get) => {
       const trimmed = text.trim();
       if (!trimmed) return;
 
-      // Optimistic local echo. TODO(M1): forward to the core via
-      // `invokeCore("send_text", { chatId, text })` and reconcile the real id.
-      get().appendMessage({
+      // Optimistic local echo, reconciled with the stored message when the
+      // core acknowledges the send.
+      const optimistic: Message = {
         id: `local-${crypto.randomUUID()}`,
         chatId,
         senderId: "me",
@@ -108,7 +118,35 @@ export const useAppStore = create<AppState>((set, get) => {
         kind: "text",
         text: trimmed,
         status: "pending",
-      });
+      };
+      get().appendMessage(optimistic);
+
+      if (!isTauri()) return;
+
+      void invokeCore<Message>("send_text", { chatId, text: trimmed })
+        .then((stored) => {
+          set((state) => ({
+            messages: {
+              ...state.messages,
+              [chatId]: (state.messages[chatId] ?? []).map((message) =>
+                message.id === optimistic.id ? stored : message,
+              ),
+            },
+          }));
+        })
+        .catch((error) => {
+          console.error("send_text failed", error);
+          set((state) => ({
+            messages: {
+              ...state.messages,
+              [chatId]: (state.messages[chatId] ?? []).map((message) =>
+                message.id === optimistic.id
+                  ? { ...message, status: "failed" as const }
+                  : message,
+              ),
+            },
+          }));
+        });
     },
 
     togglePinned: (id) => patchChat(id, (chat) => ({ pinned: !chat.pinned })),
@@ -152,6 +190,23 @@ export const useAppStore = create<AppState>((set, get) => {
     setQrCode: (qrCode) => set({ qrCode }),
     setPairCode: (pairCode) => set({ pairCode }),
     markPaired: () => set({ paired: true, qrCode: null, pairCode: null }),
+
+    setChats: (chats) => set({ chats }),
+
+    setMessages: (chatId, messages) =>
+      set((state) => ({
+        messages: { ...state.messages, [chatId]: messages },
+        loadedChatIds: { ...state.loadedChatIds, [chatId]: true },
+      })),
+
+    loadMessages: (chatId) => {
+      if (!isTauri()) return;
+      if (get().loadedChatIds[chatId]) return;
+
+      void invokeCore<Message[]>("list_messages", { chatId, limit: 200 })
+        .then((messages) => get().setMessages(chatId, messages))
+        .catch((error) => console.error("list_messages failed", error));
+    },
   };
 });
 

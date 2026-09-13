@@ -1,8 +1,9 @@
 /** Bridges core events from the Rust host into the UI store. */
 
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { listenCore } from "./ipc";
+import { invokeCore, isTauri, listenCore } from "./ipc";
+import type { ChatSummary } from "./types";
 import { useAppStore } from "../store/app";
 
 export function useCoreBridge(): void {
@@ -11,15 +12,30 @@ export function useCoreBridge(): void {
   const setQrCode = useAppStore((state) => state.setQrCode);
   const setPairCode = useAppStore((state) => state.setPairCode);
   const markPaired = useAppStore((state) => state.markPaired);
+  const setChats = useAppStore((state) => state.setChats);
+
+  const hydrateChats = useCallback(async () => {
+    if (!isTauri()) return;
+    try {
+      setChats(await invokeCore<ChatSummary[]>("list_chats"));
+    } catch (error) {
+      console.warn("failed to load chats", error);
+    }
+  }, [setChats]);
 
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     let cancelled = false;
 
+    // A session that survives a restart reconnects without a QR scan; the
+    // chat list may already be on disk.
+    void hydrateChats();
+
     listenCore((event) => {
       switch (event.type) {
         case "connection":
           setConnection(event.payload.state);
+          if (event.payload.state === "connected") void hydrateChats();
           break;
 
         case "pairing": {
@@ -33,6 +49,7 @@ export function useCoreBridge(): void {
               break;
             case "pairSuccess":
               markPaired(payload.jid);
+              void hydrateChats();
               break;
             case "pairFailure":
               setQrCode(null);
@@ -61,5 +78,12 @@ export function useCoreBridge(): void {
       cancelled = true;
       unlisten?.();
     };
-  }, [appendMessage, setConnection, setQrCode, setPairCode, markPaired]);
+  }, [
+    appendMessage,
+    setConnection,
+    setQrCode,
+    setPairCode,
+    markPaired,
+    hydrateChats,
+  ]);
 }

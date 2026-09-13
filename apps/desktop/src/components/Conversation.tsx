@@ -31,7 +31,12 @@ export function Conversation({ chat }: ConversationProps) {
     (state) => state.messages[chat.id] ?? EMPTY_MESSAGES,
   );
   const sendText = useAppStore((state) => state.sendText);
+  const loadMessages = useAppStore((state) => state.loadMessages);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    loadMessages(chat.id);
+  }, [chat.id, loadMessages]);
 
   useEffect(() => {
     const element = scrollRef.current;
