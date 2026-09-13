@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::sync::{Mutex, broadcast};
+use whatsapp_rust::buffa::Message as _;
 use whatsapp_rust::chrono::{DateTime, Utc};
 use whatsapp_rust::prelude::*;
 use whatsapp_rust::wacore::types::events::LazyHistorySync;
@@ -27,6 +28,7 @@ use crate::events::{
     ChatUpdatedEvent, ConnectionEvent, ConnectionState, CoreEvent, ErrorEvent,
     MessageStatusChangedEvent, PairingEvent, PresenceEvent, TypingEvent,
 };
+use crate::media::MediaStore as _;
 use crate::store::Store;
 use crate::types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};
 
@@ -89,6 +91,11 @@ impl WaClient {
     /// The persistent store, for listing chats and messages.
     pub fn store(&self) -> Arc<Store> {
         Arc::clone(&self.store)
+    }
+
+    /// Root directory for session state and cached media.
+    pub(crate) fn data_dir(&self) -> &std::path::Path {
+        &self.config.data_dir
     }
 
     /// Current connection state.
@@ -244,9 +251,11 @@ impl WaClient {
                     // the async worker threads.
                     if let Event::HistorySync(sync) = event.as_ref() {
                         let sync = sync.clone();
-                        let _ = tokio::task::spawn_blocking(move || {
+                        // Fire-and-forget: dropping the handle detaches the
+                        // blocking task, which is what we want here.
+                        drop(tokio::task::spawn_blocking(move || {
                             import_history_sync(&bus, &store, &sync);
-                        });
+                        }));
                     }
                 }
             })
@@ -571,6 +580,9 @@ fn handle_inbound_message(
     if let Err(error) = store.upsert_message(&message) {
         tracing::warn!(%error, "failed to store inbound message");
     }
+    if let Err(error) = store.set_raw_proto(&message.id, &context.message.encode_to_vec()) {
+        tracing::warn!(%error, "failed to store raw protobuf for inbound message");
+    }
 
     let _ = bus.send(CoreEvent::Message(message));
 }
@@ -680,6 +692,11 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                         tracing::warn!(%error, "history: message upsert failed");
                         continue;
                     }
+                    if let Some(raw) = info.message.as_option()
+                        && let Err(error) = store.set_raw_proto(&message.id, &raw.encode_to_vec())
+                    {
+                        tracing::warn!(%error, "history: raw protobuf store failed");
+                    }
                     message_count += 1;
                     if newest
                         .as_ref()
@@ -698,7 +715,6 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                         false,
                     );
                 }
-
                 let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
             }
             Ok(None) => break,
@@ -777,6 +793,15 @@ fn receipt_status(receipt: &ReceiptType) -> Option<MessageStatus> {
 
 /// Best-effort classification of a protocol message into our UI kinds.
 fn classify(message: &wa::Message) -> MessageKind {
+    // Protocol chatter (key distribution, receipts carried in message rows,
+    // reactions) is not user content and must not render as a bubble.
+    if message.protocol_message.is_set()
+        || message.reaction_message.is_set()
+        || message.sender_key_distribution_message.is_set()
+        || message.device_sent_message.is_set()
+    {
+        return MessageKind::System;
+    }
     if message.conversation.is_some() || message.extended_text_message.is_set() {
         return MessageKind::Text;
     }
@@ -894,6 +919,15 @@ mod tests {
     #[test]
     fn classifies_unknown_as_unsupported() {
         assert_eq!(classify(&wa::Message::default()), MessageKind::Unsupported);
+    }
+
+    #[test]
+    fn classifies_protocol_messages_as_system() {
+        let message = wa::Message {
+            protocol_message: MessageField::some(wa::message::ProtocolMessage::default()),
+            ..Default::default()
+        };
+        assert_eq!(classify(&message), MessageKind::System);
     }
 
     #[test]

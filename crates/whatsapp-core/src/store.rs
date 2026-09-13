@@ -18,7 +18,7 @@ use crate::error::{CoreError, Result};
 use crate::types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};
 
 /// Current schema version. Bump together with `migrations()`.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Thread-safe handle to the application database.
 pub struct Store {
@@ -68,6 +68,12 @@ impl Store {
         if version < 1 {
             connection
                 .execute_batch(include_str!("schema/001_init.sql"))
+                .map_err(storage_error)?;
+        }
+
+        if version < 2 {
+            connection
+                .execute_batch(include_str!("schema/002_media.sql"))
                 .map_err(storage_error)?;
         }
 
@@ -501,5 +507,94 @@ fn status_from_str(value: &str) -> MessageStatus {
         "played" => MessageStatus::Played,
         "failed" => MessageStatus::Failed,
         _ => MessageStatus::Pending,
+    }
+}
+
+/// Persistence hooks the media pipeline needs. Written here (not in
+/// `media.rs`) because it uses this module's private connection helpers.
+use crate::media::{MediaRecord, MediaStore};
+
+impl MediaStore for Store {
+    fn raw_proto(&self, message_id: &str) -> Result<Option<Vec<u8>>> {
+        let connection = self.lock()?;
+        connection
+            .query_row(
+                "SELECT raw_proto FROM messages WHERE id = ?1",
+                params![message_id],
+                |row| row.get::<_, Option<Vec<u8>>>(0),
+            )
+            .optional()
+            .map(Option::flatten)
+            .map_err(storage_error)
+    }
+
+    fn set_raw_proto(&self, message_id: &str, raw_proto: &[u8]) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "UPDATE messages SET raw_proto = ?1 WHERE id = ?2",
+                params![raw_proto, message_id],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    fn media_record(&self, message_id: &str) -> Result<Option<MediaRecord>> {
+        let connection = self.lock()?;
+        connection
+            .query_row(
+                "SELECT message_id, mime, file_name, size, local_path, sha256,
+                        downloaded_at
+                 FROM media WHERE message_id = ?1",
+                params![message_id],
+                |row| {
+                    Ok(MediaRecord {
+                        message_id: row.get(0)?,
+                        mime: row.get(1)?,
+                        file_name: row.get(2)?,
+                        size: row.get::<_, i64>(3)? as u64,
+                        local_path: row.get(4)?,
+                        sha256: row.get(5)?,
+                        downloaded_at: row.get::<_, i64>(6)? as u64,
+                    })
+                },
+            )
+            .optional()
+            .map_err(storage_error)
+    }
+
+    fn upsert_media_record(&self, record: &MediaRecord) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO media (message_id, mime, file_name, size,
+                                    local_path, sha256, downloaded_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(message_id) DO UPDATE SET
+                     mime = excluded.mime,
+                     file_name = excluded.file_name,
+                     size = excluded.size,
+                     local_path = excluded.local_path,
+                     sha256 = excluded.sha256,
+                     downloaded_at = excluded.downloaded_at",
+                params![
+                    &record.message_id,
+                    record.mime.as_deref(),
+                    record.file_name.as_deref(),
+                    as_i64(record.size),
+                    &record.local_path,
+                    record.sha256.as_deref(),
+                    as_i64(record.downloaded_at),
+                ],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    fn save_outgoing_message(&self, chat_id: &Jid, message: &Message, preview: &str) -> Result<()> {
+        // Same order as `WaClient::send_text`: the chat row must exist before
+        // the message references it.
+        self.record_message_activity(chat_id, preview, message.timestamp, None, false)?;
+        self.upsert_message(message)
     }
 }
