@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { LockScreen } from "./components/security/LockScreen";
 import { applyBootTheme } from "./components/settings/theme";
 import "./styles/index.css";
 
@@ -15,5 +16,6 @@ if (!container) throw new Error("#root is missing from index.html");
 createRoot(container).render(
   <StrictMode>
     <App />
+    <LockScreen />
   </StrictMode>,
 );

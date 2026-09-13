@@ -21,7 +21,9 @@ mod deep_link;
 mod events;
 mod file_open;
 mod menu;
+mod notification_center;
 mod platform;
+mod security;
 mod state;
 mod tray;
 
@@ -300,6 +302,11 @@ pub fn run() {
             platform::set_autostart,
             app_lock::set_app_lock,
             app_lock::app_lock_enabled,
+            app_lock::set_app_lock_timeout,
+            app_lock::app_lock_timeout,
+            security::security_biometry_available,
+            security::security_authenticate,
+            security::security_unlock,
             deep_link::open_link,
             deep_link::deep_link_ready,
             file_open::file_open_ready
@@ -333,10 +340,22 @@ pub fn run() {
             // Menu bar extra and `rustwa://` deep links.
             tray::setup(app.handle())?;
             deep_link::setup(app.handle());
+            // macOS notification click-through: the delegate is set once,
+            // before the first chat notification can be posted.
+            notification_center::install(app.handle());
             // Finder "Open With" / share-sheet file deliveries.
             file_open::setup(app.handle());
 
+            // App lock (M8): track main-window focus so a refocus after the
+            // configured timeout emits `ui://lock` and covers the UI again.
+            app.manage(security::FocusClock::new());
             if let Some(window) = app.get_webview_window("main") {
+                let handle = app.handle().clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Focused(focused) = event {
+                        security::handle_focus_change(&handle, *focused);
+                    }
+                });
                 let _ = window.set_focus();
             }
             Ok(())

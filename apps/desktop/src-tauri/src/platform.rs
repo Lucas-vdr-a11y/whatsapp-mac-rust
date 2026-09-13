@@ -19,7 +19,9 @@ use tauri_plugin_notification::{NotificationExt, PermissionState};
 pub struct PlatformCapabilities {
     /// Dock badge (macOS) / taskbar count (Linux).
     pub badge: bool,
-    /// Desktop notifications through `tauri-plugin-notification`.
+    /// Desktop notifications, with click-through on macOS
+    /// (`UNUserNotificationCenter`), through `tauri-plugin-notification`
+    /// elsewhere.
     pub notifications: bool,
     /// Menu bar extra (`TrayIcon`); installed by [`crate::tray::setup`].
     pub tray: bool,
@@ -69,21 +71,13 @@ pub fn notify(app: AppHandle, title: String, body: String) -> Result<(), String>
 
 /// Shows a desktop notification for a chat and tags it with the chat id.
 ///
-/// Prefer this over [`notify`] for message notifications: the `chatId` extra
-/// travels in the notification payload and is the hook future click-through
-/// handling will read. The extra is currently only surfaced by the plugin on
-/// mobile; the desktop builder ignores it, which is why this command is
-/// otherwise identical to [`notify`].
-///
-/// # Limitation
-///
-/// `tauri-plugin-notification` does not deliver per-notification click events
-/// on desktop. macOS reports notification taps at the app level (activation),
-/// without telling the app *which* notification was clicked, so the UI cannot
-/// open the right chat from a click yet. Until a richer backend (for example a
-/// `UNUserNotificationCenter` delegate extension) lands, the UI should treat
-/// clicks as "focus the window" and keep the `chatId` extra as forward
-/// compatibility.
+/// On macOS this posts through `UNUserNotificationCenter` (see
+/// [`crate::notification_center`]) with the chat id in the notification's
+/// `userInfo`; clicking the notification focuses the main window and opens the
+/// chat through the same `ui://open-chat` event a `rustwa://` deep link uses.
+/// Outside macOS, or in an unbundled dev build, it falls back to
+/// `tauri-plugin-notification`, whose desktop backend drops the extra: that
+/// path delivers the banner but cannot report clicks.
 #[tauri::command]
 pub fn notify_for_chat(
     app: AppHandle,
@@ -91,13 +85,7 @@ pub fn notify_for_chat(
     title: String,
     body: String,
 ) -> Result<(), String> {
-    app.notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .extra("chatId", &chat_id)
-        .show()
-        .map_err(|error| error.to_string())
+    crate::notification_center::notify_chat(&app, &chat_id, &title, &body)
 }
 
 /// Returns whether RustWA is registered as a login item.
@@ -134,10 +122,19 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 /// Returns whether notifications are allowed, requesting permission when the
 /// OS has not decided yet.
 ///
-/// On desktop the plugin reports `Granted` unconditionally: the OS may still
-/// gate delivery, but there is no app-facing permission state to query.
+/// On macOS with the native backend this reflects (and prompts for) the real
+/// `UNUserNotificationCenter` authorization state. The plugin's desktop
+/// backend reports `Granted` unconditionally, so it is only the fallback for
+/// other platforms and unbundled builds.
 #[tauri::command]
-pub fn notification_permission(app: AppHandle) -> Result<bool, String> {
+pub async fn notification_permission(app: AppHandle) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        if crate::notification_center::native_delivery() {
+            return crate::notification_center::request_permission().await;
+        }
+    }
+
     let notification = app.notification();
 
     match notification

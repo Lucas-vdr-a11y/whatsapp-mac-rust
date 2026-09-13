@@ -206,6 +206,10 @@ interface AppState {
   /** Mark the session usable; `jid` is present on a fresh pairing. */
   markPaired: (jid?: Jid) => void;
 
+  /** App lock overlay is showing. */
+  locked: boolean;
+  /** Show or hide the lock overlay; locking closes the open conversation. */
+  setLocked: (locked: boolean) => void;
   /** Replace the chat list with the core's view. */
   setChats: (chats: ChatSummary[]) => void;
   /** Display names by JID, harvested from `list_chats` (direct chats only).
@@ -308,6 +312,12 @@ export const useAppStore = create<AppState>((set, get) => {
     callHistory: [],
 
     selectChat: (id) => set({ selectedChatId: id }),
+
+    setLocked: (locked) =>
+      set((state) => ({
+        locked,
+        selectedChatId: locked ? null : state.selectedChatId,
+      })),
     setQuery: (query) => set({ query }),
     setFilter: (filter) => set({ filter }),
 
@@ -746,6 +756,7 @@ export const useAppStore = create<AppState>((set, get) => {
     typingByChat: {},
     avatars: {},
     presenceByChat: {},
+    locked: false,
 
     setChatTyping: (chatId, isTyping) =>
       set((state) => ({

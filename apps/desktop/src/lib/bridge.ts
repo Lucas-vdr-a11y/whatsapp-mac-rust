@@ -74,6 +74,29 @@ export function useCoreBridge(): void {
       }
     });
 
+    // App lock: the host asks for the overlay on focus-after-timeout and
+    // tells us when biometry succeeded.
+    let unlistenLock: UnlistenFn | null = null;
+    let unlistenUnlocked: UnlistenFn | null = null;
+    void listen("ui://lock", () =>
+      useAppStore.getState().setLocked(true),
+    ).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlistenLock = fn;
+      }
+    });
+    void listen("ui://unlocked", () =>
+      useAppStore.getState().setLocked(false),
+    ).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlistenUnlocked = fn;
+      }
+    });
+
     // A deep link that arrived before the UI mounted (cold start).
     void invokeCore<string | null>("deep_link_ready")
       .then((chatId) => {
@@ -254,6 +277,8 @@ export function useCoreBridge(): void {
       cancelled = true;
       unlisten?.();
       unlistenOpenChat?.();
+      unlistenLock?.();
+      unlistenUnlocked?.();
       if (hydrateTimer.current !== null) {
         window.clearTimeout(hydrateTimer.current);
         hydrateTimer.current = null;

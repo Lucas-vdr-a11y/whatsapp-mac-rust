@@ -37,5 +37,18 @@ tracing-subscriber.workspace = true
 url = "2"
 whatsapp-core = { path = "../../../crates/whatsapp-core", features = ["calls"] }
 
+# macOS-only framework bindings.
+# - App lock (M8): LocalAuthentication powers the Touch ID / Mac password
+#   prompt. Other platforms get the stub in `security.rs`.
+# - Notification click-through: posting through `UNUserNotificationCenter`
+#   and receiving delegate callbacks requires direct framework bindings; the
+#   notification plugin's backend cannot carry `userInfo`.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSError", "NSString"] }
+objc2-local-authentication = "0.3"
+objc2-user-notifications = "0.3"
+
 [lints]
 workspace = true
