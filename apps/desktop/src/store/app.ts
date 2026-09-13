@@ -150,10 +150,48 @@ export const useAppStore = create<AppState>((set, get) => {
         });
     },
 
-    togglePinned: (id) => patchChat(id, (chat) => ({ pinned: !chat.pinned })),
-    toggleMuted: (id) => patchChat(id, (chat) => ({ muted: !chat.muted })),
-    archiveChat: (id) => patchChat(id, () => ({ isArchived: true })),
-    markRead: (id) => patchChat(id, () => ({ unreadCount: 0 })),
+    togglePinned: (id) => {
+      const chat = get().chats.find((candidate) => candidate.id === id);
+      if (!chat) return;
+      const pinned = !chat.pinned;
+      patchChat(id, () => ({ pinned }));
+      if (isTauri()) {
+        void invokeCore("set_chat_pinned", { chatId: id, pinned }).catch(
+          (error) => console.error("set_chat_pinned failed", error),
+        );
+      }
+    },
+
+    toggleMuted: (id) => {
+      const chat = get().chats.find((candidate) => candidate.id === id);
+      if (!chat) return;
+      const muted = !chat.muted;
+      patchChat(id, () => ({ muted }));
+      if (isTauri()) {
+        void invokeCore("set_chat_muted", { chatId: id, muted }).catch(
+          (error) => console.error("set_chat_muted failed", error),
+        );
+      }
+    },
+
+    archiveChat: (id) => {
+      patchChat(id, () => ({ isArchived: true }));
+      if (isTauri()) {
+        void invokeCore("set_chat_archived", {
+          chatId: id,
+          archived: true,
+        }).catch((error) => console.error("set_chat_archived failed", error));
+      }
+    },
+
+    markRead: (id) => {
+      patchChat(id, () => ({ unreadCount: 0 }));
+      if (isTauri()) {
+        void invokeCore("mark_chat_read", { chatId: id }).catch((error) =>
+          console.error("mark_chat_read failed", error),
+        );
+      }
+    },
 
     deleteChat: (id) =>
       set((state) => {

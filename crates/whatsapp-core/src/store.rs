@@ -260,6 +260,52 @@ impl Store {
         Ok(())
     }
 
+    /// Pin or unpin a chat.
+    pub fn set_chat_pinned(&self, chat_id: &Jid, pinned: bool) -> Result<()> {
+        self.set_chat_flag("pinned", chat_id, pinned)
+    }
+
+    /// Mute or unmute a chat.
+    pub fn set_chat_muted(&self, chat_id: &Jid, muted: bool) -> Result<()> {
+        self.set_chat_flag("muted", chat_id, muted)
+    }
+
+    /// Archive or unarchive a chat.
+    pub fn set_chat_archived(&self, chat_id: &Jid, archived: bool) -> Result<()> {
+        self.set_chat_flag("is_archived", chat_id, archived)
+    }
+
+    /// Clear the unread counter of a chat.
+    pub fn mark_chat_read(&self, chat_id: &Jid) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "UPDATE chats SET unread_count = 0 WHERE id = ?1",
+                params![chat_id.as_str()],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    /// `column` is a hard-coded caller-supplied name, never user input.
+    fn set_chat_flag(&self, column: &str, chat_id: &Jid, value: bool) -> Result<()> {
+        let sql = match column {
+            "pinned" => "UPDATE chats SET pinned = ?1 WHERE id = ?2",
+            "muted" => "UPDATE chats SET muted = ?1 WHERE id = ?2",
+            "is_archived" => "UPDATE chats SET is_archived = ?1 WHERE id = ?2",
+            other => {
+                return Err(CoreError::Internal(format!(
+                    "unknown chat flag column: {other}"
+                )));
+            }
+        };
+        let connection = self.lock()?;
+        connection
+            .execute(sql, params![i64::from(value), chat_id.as_str()])
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
     /// Number of stored messages, for diagnostics.
     pub fn message_count(&self) -> Result<u64> {
         let connection = self.lock()?;

@@ -309,6 +309,60 @@ impl WaClient {
         self.store.list_messages(chat_id, limit)
     }
 
+    /// Pin or unpin a chat across the account's devices.
+    pub async fn set_chat_pinned(&self, chat_id: &Jid, pinned: bool) -> Result<()> {
+        let client = self.client().await?;
+        let jid = to_upstream_jid(chat_id)?;
+        let actions = client.chat_actions();
+        let result = if pinned {
+            actions.pin_chat(&jid).await
+        } else {
+            actions.unpin_chat(&jid).await
+        };
+        result.map_err(|error| CoreError::Protocol(error.to_string()))?;
+        self.store.set_chat_pinned(chat_id, pinned)
+    }
+
+    /// Mute a chat indefinitely, or unmute it.
+    pub async fn set_chat_muted(&self, chat_id: &Jid, muted: bool) -> Result<()> {
+        let client = self.client().await?;
+        let jid = to_upstream_jid(chat_id)?;
+        let actions = client.chat_actions();
+        let result = if muted {
+            actions.mute_chat(&jid).await
+        } else {
+            actions.unmute_chat(&jid).await
+        };
+        result.map_err(|error| CoreError::Protocol(error.to_string()))?;
+        self.store.set_chat_muted(chat_id, muted)
+    }
+
+    /// Archive or unarchive a chat.
+    pub async fn set_chat_archived(&self, chat_id: &Jid, archived: bool) -> Result<()> {
+        let client = self.client().await?;
+        let jid = to_upstream_jid(chat_id)?;
+        let actions = client.chat_actions();
+        let result = if archived {
+            actions.archive_chat(&jid, None).await
+        } else {
+            actions.unarchive_chat(&jid, None).await
+        };
+        result.map_err(|error| CoreError::Protocol(error.to_string()))?;
+        self.store.set_chat_archived(chat_id, archived)
+    }
+
+    /// Mark a chat as read (clears the unread counter locally and remotely).
+    pub async fn mark_chat_read(&self, chat_id: &Jid) -> Result<()> {
+        let client = self.client().await?;
+        let jid = to_upstream_jid(chat_id)?;
+        client
+            .chat_actions()
+            .mark_chat_as_read(&jid, true, None)
+            .await
+            .map_err(|error| CoreError::Protocol(error.to_string()))?;
+        self.store.mark_chat_read(chat_id)
+    }
+
     async fn client(&self) -> Result<Arc<Client>> {
         let guard = self.handle.lock().await;
         guard

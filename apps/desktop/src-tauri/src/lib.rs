@@ -88,6 +88,61 @@ async fn list_messages(
         .map_err(|error| error.to_string())
 }
 
+/// Pin or unpin a chat (synced to the account's other devices).
+#[tauri::command]
+async fn set_chat_pinned(
+    state: tauri::State<'_, state::AppState>,
+    chat_id: String,
+    pinned: bool,
+) -> Result<(), String> {
+    state
+        .core()
+        .set_chat_pinned(&Jid::new(chat_id), pinned)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Mute or unmute a chat (synced to the account's other devices).
+#[tauri::command]
+async fn set_chat_muted(
+    state: tauri::State<'_, state::AppState>,
+    chat_id: String,
+    muted: bool,
+) -> Result<(), String> {
+    state
+        .core()
+        .set_chat_muted(&Jid::new(chat_id), muted)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Archive or unarchive a chat (synced to the account's other devices).
+#[tauri::command]
+async fn set_chat_archived(
+    state: tauri::State<'_, state::AppState>,
+    chat_id: String,
+    archived: bool,
+) -> Result<(), String> {
+    state
+        .core()
+        .set_chat_archived(&Jid::new(chat_id), archived)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Mark a chat as read.
+#[tauri::command]
+async fn mark_chat_read(
+    state: tauri::State<'_, state::AppState>,
+    chat_id: String,
+) -> Result<(), String> {
+    state
+        .core()
+        .mark_chat_read(&Jid::new(chat_id))
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Application entry point.
 pub fn run() {
     let _ = tracing_subscriber::fmt()
@@ -116,6 +171,10 @@ pub fn run() {
             send_text,
             list_chats,
             list_messages,
+            set_chat_pinned,
+            set_chat_muted,
+            set_chat_archived,
+            mark_chat_read,
             platform::notify,
             platform::notification_permission,
             platform::set_badge,

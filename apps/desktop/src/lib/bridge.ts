@@ -62,9 +62,25 @@ export function useCoreBridge(): void {
           break;
         }
 
-        case "message":
-          appendMessage(event.payload);
+        case "message": {
+          const message = event.payload;
+          appendMessage(message);
+
+          // Native notification for incoming messages while the window is
+          // hidden. Best-effort: permission may still be pending.
+          if (!message.fromMe && document.hidden) {
+            const chat = useAppStore
+              .getState()
+              .chats.find((candidate) => candidate.id === message.chatId);
+            void invokeCore("notify", {
+              title: chat?.name ?? "New message",
+              body: message.text ?? "[Media]",
+            }).catch(() => {
+              // Notification delivery is not critical; ignore failures.
+            });
+          }
           break;
+        }
 
         // The remaining event types are wired up as their milestones land.
         default:

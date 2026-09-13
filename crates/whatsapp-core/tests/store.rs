@@ -116,6 +116,28 @@ fn message_status_can_be_updated() {
 }
 
 #[test]
+fn chat_flags_and_read_state_can_be_updated() {
+    let store = Store::open_in_memory().expect("open store");
+    let chat_id = "alice@s.whatsapp.net";
+    store
+        .upsert_chat(&sample_chat(chat_id, "Alice", 10))
+        .unwrap();
+
+    let jid = Jid::new(chat_id);
+    store.set_chat_pinned(&jid, false).unwrap();
+    store.set_chat_muted(&jid, true).unwrap();
+    store.set_chat_archived(&jid, true).unwrap();
+    store.mark_chat_read(&jid).unwrap();
+
+    let mut chats = store.list_chats().unwrap();
+    let stored = chats.remove(0);
+    assert!(!stored.pinned);
+    assert!(stored.muted);
+    assert!(stored.is_archived);
+    assert_eq!(stored.unread_count, 0);
+}
+
+#[test]
 fn opening_twice_is_idempotent() {
     // The same in-memory store cannot be reopened, but re-running migrations
     // on one connection must be a no-op. This guards the user_version logic.
