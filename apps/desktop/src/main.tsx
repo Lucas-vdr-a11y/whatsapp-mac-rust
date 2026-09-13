@@ -1,8 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
-import "./styles/global.css";
-import "./styles/components.css";
+import "./styles/index.css";
 
 // Dev-only: `?theme=light` switches the palette for design review.
 const theme = new URLSearchParams(window.location.search).get("theme");
