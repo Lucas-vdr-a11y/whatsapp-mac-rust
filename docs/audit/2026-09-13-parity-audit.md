@@ -72,6 +72,21 @@ Date: 2026-09-13 · Branch: `feat/m1-protocol-core` · Method: live side-by-side
 
 See subagent report (session log). Key file:line refs preserved in the findings above.
 
+## Sync audit — verified root causes (subagent, code-verified)
+
+- **S1 (P0, =1/4/5):** flag patches (Archive/Mute/Pin/MarkChatAsRead) applied via bare `UPDATE chats WHERE id=?` (store.rs:526-559) with no `canonical_jid()` resolution and no row-exists check; `Ok(0)` ignored; reconnect uses `full_sync: false` (client.rs:369-382) so patches are never replayed. Race: patches arrive before `import_history_sync` creates rows (client.rs:323 spawn_blocking). `upsert_chat_from_history` ON CONFLICT deliberately keeps local `is_archived` (store.rs:245).
+- **S2 (P0, =5 reactions):** `handle_reaction` (client.rs:981-1010) inserts into `reactions` (FK→messages) without the message row existing; lost permanently on FK error; `chat_id` from `key.remote_jid` not canonicalized.
+- **S3 (P0, =3 names):** `handle_inbound_message` applies `push_name` to group chats (client.rs:883-893, no is_group guard; store.rs:487-490 ON CONFLICT overwrites name); `chats_needing_group_names` (store.rs:653-670) only targets `''`/JID-like names so "Meike" is skipped forever. History path guards correctly (client.rs:1214-1219).
+- **S4 (P0, =4 missing chats):** `import_history_sync` `Err => warn; break` (client.rs:1251-1254) — one bad conversation aborts the entire blob import; remainder never imported; nothing re-requests.
+- **S5 (P1, =6 unread):** unread locally accumulated (store.rs:496-508); server counter applied only on first insert (store.rs:242); `mark_chat_read` never canonicalizes (store.rs:531-540); rail badge sums archived+duplicate chats (App.tsx:50-53).
+- **S6 (P1, =raw JIDs):** name passes one-shot, clock-driven, capped (group +10s/200, contact +6s/80; client.rs:413-518); chats imported later never resolved; usync failures silent.
+- **S7 (P1, =duplicates):** group `@lid` rows never merged with `@g.us` twins; `Jid::is_group` only matches `g.us` (types.rs:42-44) so group-LID rows are misclassified as direct chats.
+- **S8 (P1):** dropped events: GroupUpdate, PushNameUpdate, DeleteChatUpdate/ClearChatUpdate/DeleteMessageForMeUpdate, UndecryptableMessage, DisappearingModeChanged, PictureUpdate, DirtyState (client.rs:290-311).
+- **S9 (P1):** receipts: raw `chat_id` (client.rs:1019); `set_message_status` not monotonic (store.rs:439-448); group Read flips whole message.
+- **S10-14 (P2):** failed sends not persisted as Failed; mark-as-unread ignored (client.rs:1093); `link_jids` misses call_log; `upsert_message` ON CONFLICT reassigns chat_id (store.rs:273-276); frontend fabricates ghost rows (app.ts:1373-1377).
+
+**Structural fix:** every chat-list writer must (a) resolve `canonical_jid()` and (b) upsert-or-defer instead of bare UPDATE; plus full `regular` app-state sync on connect.
+
 ## Status / repair plan
 
 - [x] Audit complete (this doc)
