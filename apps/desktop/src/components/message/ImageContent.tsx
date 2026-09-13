@@ -2,15 +2,32 @@
  *
  * Shows a placeholder with a download affordance until `media_download`
  * resolves a local path, then a bounded rounded preview that opens in the
- * lightbox. Stickers render small and without bubble chrome. */
+ * lightbox. Stickers render small and without bubble chrome.
+ *
+ * View-once payloads render as a covered "1" card; the reveal downloads the
+ * file (when needed), opens the lightbox once and persists the viewed marker
+ * per message id so the media cannot be reopened. */
 
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { Download, ImageOff, LoaderCircle, RotateCw } from "lucide-react";
+import {
+  Download,
+  Eye,
+  EyeOff,
+  ImageOff,
+  LoaderCircle,
+  RotateCw,
+} from "lucide-react";
 import { avatarSrc } from "../../lib/avatar";
 import type { Message } from "../../lib/types";
 import { useAppStore } from "../../store/app";
 import { Lightbox } from "./Lightbox";
+import {
+  isAutoDownloadDisabled,
+  isViewOnce,
+  isViewOnceViewed,
+  markViewOnceViewed,
+} from "./media";
 
 type LoadState = "idle" | "loading" | "error";
 
@@ -24,6 +41,11 @@ export function ImageContent({ message, sticker = false }: ImageContentProps) {
   const downloadMedia = useAppStore((state) => state.downloadMedia);
   const [state, setState] = useState<LoadState>("idle");
   const [open, setOpen] = useState(false);
+  const viewOnce = isViewOnce(message);
+  const [viewed, setViewed] = useState(
+    () => viewOnce && isViewOnceViewed(message.id),
+  );
+  const autoDownloadOff = isAutoDownloadDisabled();
 
   const download = () => {
     setState("loading");
@@ -32,9 +54,114 @@ export function ImageContent({ message, sticker = false }: ImageContentProps) {
       .catch(() => setState("error"));
   };
 
+  // View-once reveal: download when needed, then open the lightbox exactly
+  // once and persist the viewed marker so it cannot be replayed.
+  const revealOnce = () => {
+    if (viewed || state === "loading") return;
+    const reveal = () => {
+      markViewOnceViewed(message.id);
+      setViewed(true);
+      setOpen(true);
+    };
+    if (path) {
+      reveal();
+      return;
+    }
+    setState("loading");
+    downloadMedia(message.id, message.kind)
+      .then(() => {
+        setState("idle");
+        reveal();
+      })
+      .catch(() => setState("error"));
+  };
+
   const caption = message.text ? (
     <div className="media-caption">{message.text}</div>
   ) : null;
+
+  const lightbox =
+    open && path
+      ? createPortal(
+          <Lightbox
+            kind="image"
+            src={avatarSrc(path)}
+            caption={message.text}
+            onClose={() => setOpen(false)}
+          />,
+          document.body,
+        )
+      : null;
+
+  if (viewOnce && viewed) {
+    return (
+      <>
+        <div
+          className={`view-once-card viewed${sticker ? " sticker" : ""}`}
+          aria-label="View-once photo, already opened"
+        >
+          <span className="view-once-badge" aria-hidden="true">
+            1
+          </span>
+          <span className="view-once-state">
+            <EyeOff size={22} />
+            <span>Opened</span>
+          </span>
+        </div>
+        {caption}
+        {lightbox}
+      </>
+    );
+  }
+
+  if (viewOnce) {
+    return (
+      <>
+        <button
+          type="button"
+          className={`view-once-card${sticker ? " sticker" : ""}${
+            state === "error" ? " error" : ""
+          }`}
+          title={state === "error" ? "Retry download" : "Tap to view once"}
+          onClick={state === "loading" ? undefined : revealOnce}
+        >
+          {path ? (
+            <img
+              className="view-once-preview"
+              src={avatarSrc(path)}
+              alt=""
+              draggable={false}
+            />
+          ) : null}
+          <span className="view-once-veil" aria-hidden="true" />
+          <span className="view-once-badge" aria-hidden="true">
+            1
+          </span>
+          <span className="view-once-state">
+            {state === "loading" ? (
+              <LoaderCircle size={24} className="spin" />
+            ) : state === "error" ? (
+              <RotateCw size={24} />
+            ) : (
+              <Eye size={24} />
+            )}
+            <span>
+              {state === "loading"
+                ? "Downloading…"
+                : state === "error"
+                  ? "Download failed — tap to retry"
+                  : "Tap to view once"}
+            </span>
+            {state === "idle" && autoDownloadOff ? (
+              <span className="media-hint">Auto-download is off</span>
+            ) : null}
+          </span>
+        </button>
+        {caption}
+        {lightbox}
+      </>
+    );
+  }
 
   if (path) {
     return (
@@ -52,17 +179,7 @@ export function ImageContent({ message, sticker = false }: ImageContentProps) {
           />
         </button>
         {caption}
-        {open
-          ? createPortal(
-              <Lightbox
-                kind="image"
-                src={avatarSrc(path)}
-                caption={message.text}
-                onClose={() => setOpen(false)}
-              />,
-              document.body,
-            )
-          : null}
+        {lightbox}
       </>
     );
   }
@@ -95,6 +212,9 @@ export function ImageContent({ message, sticker = false }: ImageContentProps) {
                 ? "Sticker"
                 : "Photo"}
         </span>
+        {state === "idle" && autoDownloadOff ? (
+          <span className="media-hint">Auto-download is off</span>
+        ) : null}
       </button>
       {caption}
     </>

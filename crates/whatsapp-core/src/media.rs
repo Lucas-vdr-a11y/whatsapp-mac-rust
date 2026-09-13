@@ -248,6 +248,18 @@ pub struct MediaAttachment<'a> {
     pub sha256: Option<Vec<u8>>,
 }
 
+/// True when a raw protobuf message carries view-once content.
+///
+/// Covers the legacy `viewOnceMessage` / `viewOnceMessageV2` /
+/// `viewOnceMessageV2Extension` envelopes — also when they are nested under
+/// `deviceSentMessage` or `ephemeralMessage` — and the inline `view_once`
+/// flag on modern image/video/audio payloads. [`classify_media`] unwraps the
+/// same envelopes, so callers can get the inner kind *and* this flag from one
+/// payload.
+pub fn is_view_once(message: &wa::Message) -> bool {
+    message.is_view_once()
+}
+
 /// Find the downloadable payload of a message, unwrapping
 /// ephemeral/view-once/edited wrappers. Returns `None` for messages that carry
 /// no media (text, location, polls, …) and for kinds this build cannot fetch.
@@ -636,6 +648,8 @@ impl MediaPipeline {
             kind: media.kind,
             text: caption.map(str::to_owned),
             status: MessageStatus::Sent,
+            // This build has no outgoing view-once send surface yet.
+            view_once: false,
         };
 
         let preview = preview_for(&message);
@@ -987,6 +1001,7 @@ mod tests {
         assert_eq!(attachment.mime.as_deref(), Some("image/jpeg"));
         assert_eq!(attachment.size, Some(4096));
         assert_eq!(attachment.sha256.as_deref(), Some(&[9u8; 32][..]));
+        assert!(!is_view_once(&message));
 
         let wrapped = wa::Message {
             view_once_message: MessageField::some(wa::message::FutureProofMessage {
@@ -994,10 +1009,89 @@ mod tests {
             }),
             ..Default::default()
         };
+        assert!(is_view_once(&wrapped));
         assert_eq!(
             classify_media(&wrapped).expect("view once image").kind,
             MessageKind::Image
         );
+    }
+
+    #[test]
+    fn detects_every_view_once_wrapper() {
+        let inner = image_proto();
+
+        let wrapper = |message: wa::Message| wa::message::FutureProofMessage {
+            message: MessageField::some(message),
+        };
+
+        let v1 = wa::Message {
+            view_once_message: MessageField::some(wrapper(inner.clone())),
+            ..Default::default()
+        };
+        let v2 = wa::Message {
+            view_once_message_v2: MessageField::some(wrapper(inner.clone())),
+            ..Default::default()
+        };
+        let v2_extension = wa::Message {
+            view_once_message_v2_extension: MessageField::some(wrapper(inner.clone())),
+            ..Default::default()
+        };
+
+        for message in [&v1, &v2, &v2_extension] {
+            assert!(is_view_once(message));
+            let attachment = classify_media(message).expect("view once image");
+            assert_eq!(attachment.kind, MessageKind::Image);
+            assert_eq!(attachment.source.app_info(), MediaType::Image);
+        }
+
+        // A view-once envelope can itself be nested under the multi-device
+        // `deviceSentMessage` wrapper; detection must see through it.
+        let nested = wa::Message {
+            device_sent_message: MessageField::some(wa::message::DeviceSentMessage {
+                message: MessageField::some(wa::Message {
+                    view_once_message_v2: MessageField::some(wrapper(inner.clone())),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(is_view_once(&nested));
+        assert_eq!(
+            classify_media(&nested)
+                .expect("nested view once image")
+                .kind,
+            MessageKind::Image
+        );
+
+        // Non-media messages stay view-once-free.
+        let text = wa::Message {
+            conversation: Some("hello".to_owned()),
+            ..Default::default()
+        };
+        assert!(!is_view_once(&text));
+    }
+
+    #[test]
+    fn detects_inline_view_once_flag_on_media_payloads() {
+        // Modern clients mark the payload itself instead of wrapping it.
+        let inline = wa::Message {
+            image_message: MessageField::some(wa::message::ImageMessage {
+                view_once: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(is_view_once(&inline));
+
+        let plain = wa::Message {
+            image_message: MessageField::some(wa::message::ImageMessage {
+                view_once: Some(false),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!is_view_once(&plain));
     }
 
     #[test]

@@ -202,6 +202,104 @@
   font-size: 12.5px;
 }
 
+/* View-once media --------------------------------------------------- */
+
+.view-once-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 260px;
+  max-width: 100%;
+  height: 170px;
+  overflow: hidden;
+  border-radius: var(--radius-bubble);
+  background: var(--bg-hover);
+  color: #fff;
+  font-size: 13px;
+  text-align: center;
+}
+
+.view-once-card.video {
+  width: 300px;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+
+.view-once-card:hover {
+  filter: brightness(1.08);
+}
+
+.view-once-card.error {
+  color: var(--danger);
+}
+
+.view-once-card.viewed {
+  cursor: default;
+  color: var(--text-secondary);
+}
+
+.view-once-card.viewed:hover {
+  filter: none;
+}
+
+.view-once-card.viewed .view-once-state {
+  text-shadow: none;
+}
+
+.view-once-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(14px);
+  transform: scale(1.12);
+}
+
+.view-once-veil {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.view-once-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.view-once-state {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 0 18px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+/* Quiet informational line on download placeholders. */
+.media-hint {
+  font-size: 11px;
+  line-height: 14px;
+  opacity: 0.75;
+}
+
 /* Voice notes ------------------------------------------------------- */
 
 .voice-row {

@@ -167,4 +167,10 @@ pub struct Message {
     pub text: Option<String>,
     /// Delivery state for outgoing messages.
     pub status: MessageStatus,
+    /// True when the payload arrived in a view-once envelope
+    /// (`viewOnceMessage` / `viewOnceMessageV2` / `viewOnceMessageV2Extension`,
+    /// possibly nested under `deviceSentMessage`/`ephemeralMessage`) or carries
+    /// the inline `view_once` flag on modern payloads.
+    #[serde(default)]
+    pub view_once: bool,
 }

@@ -52,6 +52,66 @@ export function messagePreview(message: Message, deleted = false): string {
   return mediaLabel(message.kind);
 }
 
+/** True when the core marked this message as view-once. Older payloads omit the
+ * field, so it is read structurally and defaults to false. */
+export function isViewOnce(message: Message): boolean {
+  return (message as Message & { viewOnce?: boolean }).viewOnce === true;
+}
+
+/** localStorage prefix for the per-message "already viewed" marker. */
+const VIEW_ONCE_VIEWED_PREFIX = "rustwa.viewonce.";
+
+/** True once this view-once message was opened. Persisted per message id so
+ * the reveal cannot be replayed after a reload, matching WhatsApp. */
+export function isViewOnceViewed(messageId: string): boolean {
+  return readStorage(`${VIEW_ONCE_VIEWED_PREFIX}${messageId}`) === "1";
+}
+
+/** Persist the "already viewed" marker for a view-once message. */
+export function markViewOnceViewed(messageId: string): void {
+  writeStorage(`${VIEW_ONCE_VIEWED_PREFIX}${messageId}`, "1");
+}
+
+/** Auto-download preference shape stored in localStorage. */
+export type AutoDownloadPolicy = "wifi" | "always" | "never";
+
+/** Desktop default: media may be fetched whenever the user asks for it. */
+export const DEFAULT_AUTO_DOWNLOAD_POLICY: AutoDownloadPolicy = "always";
+
+/** localStorage key backing the policy (a future settings screen writes it). */
+const AUTO_DOWNLOAD_KEY = "rustwa.autodownload";
+
+/** Read the auto-download policy, tolerating a missing or corrupt value. */
+export function readAutoDownloadPolicy(): AutoDownloadPolicy {
+  const raw = readStorage(AUTO_DOWNLOAD_KEY);
+  return raw === "wifi" || raw === "always" || raw === "never"
+    ? raw
+    : DEFAULT_AUTO_DOWNLOAD_POLICY;
+}
+
+/** True when the policy forbids automatic media fetches. Explicit user
+ * downloads stay allowed; this only drives the placeholder hint today. */
+export function isAutoDownloadDisabled(): boolean {
+  return readAutoDownloadPolicy() === "never";
+}
+
+/** localStorage access that survives private mode / disabled storage. */
+function readStorage(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Storage may be unavailable; the reveal state then lasts this session.
+  }
+}
+
 /** Neutral fallback label for a message kind. */
 export function mediaLabel(kind: MessageKind): string {
   switch (kind) {

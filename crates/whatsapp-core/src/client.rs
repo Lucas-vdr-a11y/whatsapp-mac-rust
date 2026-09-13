@@ -507,6 +507,7 @@ impl WaClient {
             kind: MessageKind::Text,
             text: Some(text.to_owned()),
             status: MessageStatus::Sent,
+            view_once: false,
         };
 
         // Chat row first: the message references it.
@@ -739,6 +740,7 @@ fn handle_inbound_message(
         } else {
             MessageStatus::Delivered
         },
+        view_once: crate::media::is_view_once(&context.message),
     };
 
     let name_hint = (!info.push_name.trim().is_empty()).then_some(info.push_name.as_str());
@@ -1087,6 +1089,7 @@ fn convert_history_message(info: &wa::WebMessageInfo) -> Option<Message> {
         } else {
             MessageStatus::Delivered
         },
+        view_once: body.map(crate::media::is_view_once).unwrap_or(false),
     })
 }
 
@@ -1216,6 +1219,7 @@ mod tests {
             kind: MessageKind::Text,
             text: Some("hello".to_owned()),
             status: MessageStatus::Delivered,
+            view_once: false,
         }
     }
 
