@@ -701,3 +701,49 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Starred messages */
+.starred-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--divider);
+}
+
+.starred-row:hover {
+  background: var(--bg-hover);
+}
+
+.starred-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.starred-chat {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.starred-text {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.starred-time {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-secondary);
+}

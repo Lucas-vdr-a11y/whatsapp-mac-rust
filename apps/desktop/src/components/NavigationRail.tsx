@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Star } from "lucide-react";
 import {
   CircleDashed,
   MessageCircle,
@@ -6,15 +7,15 @@ import {
   RadioTower,
   Settings,
   UserRound,
-  Users,
 } from "./icons";
 
 export type RailSection =
   | "chats"
+  | "calls"
   | "status"
   | "channels"
+  | "starred"
   | "communities"
-  | "calls"
   | "settings"
   | "profile";
 
@@ -24,12 +25,15 @@ interface RailItem {
   icon: ReactNode;
 }
 
+// Order mirrors the official macOS app: Chats, Calls, Status, Channels,
+// Starred. Communities live inside the chat list in the official client, so
+// they are reachable but not a rail item here either.
 const primaryItems: RailItem[] = [
   { id: "chats", label: "Chats", icon: <MessageCircle size={24} /> },
+  { id: "calls", label: "Calls", icon: <Phone size={24} /> },
   { id: "status", label: "Status", icon: <CircleDashed size={24} /> },
   { id: "channels", label: "Channels", icon: <RadioTower size={24} /> },
-  { id: "communities", label: "Communities", icon: <Users size={24} /> },
-  { id: "calls", label: "Calls", icon: <Phone size={24} /> },
+  { id: "starred", label: "Starred messages", icon: <Star size={24} /> },
 ];
 
 const secondaryItems: RailItem[] = [

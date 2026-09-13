@@ -10,6 +10,7 @@ import { ChannelsScreen } from "./components/screens/ChannelsScreen";
 import { ComingSoonScreen } from "./components/screens/ComingSoonScreen";
 import { CommunitiesScreen } from "./components/screens/CommunitiesScreen";
 import { StatusScreen } from "./components/screens/StatusScreen";
+import { StarredScreen } from "./components/screens/StarredScreen";
 import { useCoreBridge } from "./lib/bridge";
 import { isTauri } from "./lib/ipc";
 import { selectVisibleChats, useAppStore } from "./store/app";
@@ -81,6 +82,8 @@ export default function App() {
         <CommunitiesScreen />
       ) : section === "calls" ? (
         <CallsScreen />
+      ) : section === "starred" ? (
+        <StarredScreen />
       ) : (
         <ComingSoonScreen section={section} />
       )}

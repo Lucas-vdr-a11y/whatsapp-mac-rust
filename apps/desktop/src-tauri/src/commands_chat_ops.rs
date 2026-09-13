@@ -148,3 +148,30 @@ pub async fn event_create(
         .await
         .map_err(|error| error.to_string())
 }
+
+/// Every starred message, newest first.
+#[tauri::command]
+pub async fn list_starred(
+    state: State<'_, AppState>,
+    limit: Option<u32>,
+) -> Result<Vec<Message>, String> {
+    state
+        .core()
+        .store()
+        .list_starred(limit.unwrap_or(200))
+        .map_err(|error| error.to_string())
+}
+
+/// Search message text, newest first.
+#[tauri::command]
+pub async fn search_messages(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<Message>, String> {
+    state
+        .core()
+        .store()
+        .search_messages(&query, limit.unwrap_or(100))
+        .map_err(|error| error.to_string())
+}

@@ -275,6 +275,7 @@ impl WaClient {
                     EventKind::ChatPresence,
                     EventKind::Presence,
                     EventKind::ContactUpdate,
+                    EventKind::StarUpdate,
                 ],
                 move |event, _client| {
                     let bus = bus_updates.clone();
@@ -826,6 +827,12 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
                 last_seen_ts: presence.last_seen.map(|value| value.timestamp() as u64),
             }));
         }
+        Event::StarUpdate(update) => {
+            let starred = update.action.starred.unwrap_or(false);
+            if let Err(error) = store.set_message_starred(&update.message_id, starred) {
+                tracing::warn!(%error, "failed to store star update");
+            }
+        }
         Event::ContactUpdate(update) => {
             let action = &update.action;
             let name = action
@@ -1080,6 +1087,9 @@ fn preview_for(message: &Message) -> String {
         MessageKind::Audio => "[Audio]".to_owned(),
         MessageKind::Document => "[Document]".to_owned(),
         MessageKind::Sticker => "[Sticker]".to_owned(),
+        // Protocol chatter is not user content and must never become the
+        // chat-list preview.
+        MessageKind::System => String::new(),
         _ => "[Message]".to_owned(),
     };
     text.chars().take(MAX).collect()

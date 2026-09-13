@@ -18,7 +18,7 @@ use crate::error::{CoreError, Result};
 use crate::types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};
 
 /// Current schema version. Bump together with `migrations()`.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Thread-safe handle to the application database.
 pub struct Store {
@@ -80,6 +80,12 @@ impl Store {
         if version < 3 {
             connection
                 .execute_batch(include_str!("schema/003_reactions.sql"))
+                .map_err(storage_error)?;
+        }
+
+        if version < 4 {
+            connection
+                .execute_batch(include_str!("schema/004_starred.sql"))
                 .map_err(storage_error)?;
         }
 
@@ -602,6 +608,37 @@ impl Store {
             .execute("DELETE FROM messages WHERE id = ?1", params![message_id])
             .map_err(storage_error)?;
         Ok(())
+    }
+
+    /// Mark a message as starred (or clear it).
+    pub fn set_message_starred(&self, message_id: &str, starred: bool) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "UPDATE messages SET starred = ?2 WHERE id = ?1",
+                params![message_id, i64::from(starred)],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    /// Every starred message, newest first.
+    pub fn list_starred(&self, limit: u32) -> Result<Vec<Message>> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, chat_id, sender_id, from_me, timestamp, kind, text, status
+                 FROM messages
+                 WHERE starred = 1
+                 ORDER BY timestamp DESC, rowid DESC
+                 LIMIT ?1",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![limit], row_to_message)
+            .map_err(storage_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(storage_error)
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {

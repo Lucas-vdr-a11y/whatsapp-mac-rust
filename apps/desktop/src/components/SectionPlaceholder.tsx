@@ -5,6 +5,7 @@ const titles: Record<Exclude<RailSection, "chats">, string> = {
   channels: "Channels",
   communities: "Communities",
   calls: "Calls",
+  starred: "Starred messages",
   settings: "Settings",
   profile: "Profile",
 };
@@ -14,6 +15,7 @@ const descriptions: Record<Exclude<RailSection, "chats">, string> = {
   channels: "Follow updates from people and organizations.",
   communities: "Bring related groups together in one place.",
   calls: "Voice and video calls, including call history.",
+  starred: "Messages you starred, from every chat.",
   settings: "Account, privacy, notifications and appearance.",
   profile: "Your name, photo and about text.",
 };

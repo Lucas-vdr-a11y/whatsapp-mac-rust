@@ -219,9 +219,9 @@ impl WaClient {
                 .await
         };
         result.map_err(|error| CoreError::Protocol(error.to_string()))?;
-        // The schema has no `starred` column, so the app-state mutation above
-        // is the only persistence: the flag syncs across our devices but is not
-        // stored in the local `messages` table.
+        // Mirror the flag locally so the starred-messages screen can show it
+        // without waiting for the app-state round-trip.
+        self.store().set_message_starred(message_id, star)?;
         Ok(())
     }
 }
