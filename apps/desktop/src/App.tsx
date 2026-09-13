@@ -49,7 +49,11 @@ export default function App() {
   const chats = useAppStore(useShallow(selectVisibleChats));
   const unreadCount = useAppStore((state) =>
     state.chats.reduce(
-      (sum, chat) => sum + (chat.muted ? 0 : chat.unreadCount),
+      (sum, chat) =>
+        sum +
+        // Archived chats get their own badge on the rail's Archived item
+        // (see NavigationRail); counting them here would double-report.
+        (chat.isArchived || chat.muted ? 0 : chat.unreadCount),
       0,
     ),
   );

@@ -201,6 +201,72 @@ fn message_status_can_be_updated() {
 }
 
 #[test]
+fn message_status_only_upgrades_never_downgrades() {
+    let store = Store::open_in_memory().expect("open store");
+    let chat_id = "alice@s.whatsapp.net";
+    store
+        .upsert_chat(&sample_chat(chat_id, "Alice", 10))
+        .unwrap();
+
+    // A Delivered message: an out-of-order Sender receipt must not pull it
+    // back to Sent.
+    store
+        .upsert_message(&sample_message("m1", chat_id, 10))
+        .unwrap();
+    store.set_message_status("m1", MessageStatus::Delivered).unwrap();
+    store.set_message_status("m1", MessageStatus::Sent).unwrap();
+    assert_eq!(
+        store.find_message("m1").unwrap().unwrap().status,
+        MessageStatus::Delivered
+    );
+
+    // Read upgrades Delivered; a late Delivered receipt keeps Read.
+    store.set_message_status("m1", MessageStatus::Read).unwrap();
+    store
+        .set_message_status("m1", MessageStatus::Delivered)
+        .unwrap();
+    assert_eq!(
+        store.find_message("m1").unwrap().unwrap().status,
+        MessageStatus::Read
+    );
+
+    // Pending is the bottom of the ladder: it never overrides anything.
+    store.set_message_status("m1", MessageStatus::Pending).unwrap();
+    assert_eq!(
+        store.find_message("m1").unwrap().unwrap().status,
+        MessageStatus::Read
+    );
+
+    // Equal statuses are idempotent, not errors.
+    store.set_message_status("m1", MessageStatus::Read).unwrap();
+    assert_eq!(
+        store.find_message("m1").unwrap().unwrap().status,
+        MessageStatus::Read
+    );
+
+    // Failed is terminal: no later receipt resurrects a failed send.
+    store
+        .upsert_message(&sample_message("m2", chat_id, 20))
+        .unwrap();
+    store.set_message_status("m2", MessageStatus::Failed).unwrap();
+    store.set_message_status("m2", MessageStatus::Read).unwrap();
+    assert_eq!(
+        store.find_message("m2").unwrap().unwrap().status,
+        MessageStatus::Failed
+    );
+
+    // The normal pending → sent ladder still works.
+    let mut m3 = sample_message("m3", chat_id, 30);
+    m3.status = MessageStatus::Pending;
+    store.upsert_message(&m3).unwrap();
+    store.set_message_status("m3", MessageStatus::Sent).unwrap();
+    assert_eq!(
+        store.find_message("m3").unwrap().unwrap().status,
+        MessageStatus::Sent
+    );
+}
+
+#[test]
 fn chat_flags_and_read_state_can_be_updated() {
     let store = Store::open_in_memory().expect("open store");
     let chat_id = "alice@s.whatsapp.net";
@@ -289,11 +355,13 @@ fn history_merge_preserves_names_and_flags() {
     store.upsert_chat(&live).unwrap();
 
     // A later history chunk with no name and zeroed flags must not clobber it.
+    // The chunk carries no unread counter (like an older-message backfill), so
+    // the locally accumulated count stays.
     let mut history = sample_chat("a@s.whatsapp.net", "31619446549", 200);
     history.pinned = false;
     history.unread_count = 0;
     store
-        .upsert_chat_from_history(&history, false, "31619446549")
+        .upsert_chat_from_history(&history, false, "31619446549", None)
         .unwrap();
 
     let stored = store.list_chats().unwrap().remove(0);
@@ -305,10 +373,12 @@ fn history_merge_preserves_names_and_flags() {
     // A numeric placeholder chat does get a real name from history.
     let numeric = sample_chat("b@s.whatsapp.net", "999", 10);
     store
-        .upsert_chat_from_history(&numeric, false, "999")
+        .upsert_chat_from_history(&numeric, false, "999", None)
         .unwrap();
     let real = sample_chat("b@s.whatsapp.net", "Bob", 20);
-    store.upsert_chat_from_history(&real, true, "999").unwrap();
+    store
+        .upsert_chat_from_history(&real, true, "999", None)
+        .unwrap();
 
     let bob = store
         .list_chats()
@@ -320,20 +390,50 @@ fn history_merge_preserves_names_and_flags() {
 }
 
 #[test]
-fn history_unread_does_not_reinflate_a_read_chat() {
+fn history_server_unread_replaces_the_local_counter() {
+    // The server counter is the source of truth: a locally inflated count
+    // (unread accumulated before history synced) must converge to whatever
+    // the sync chunk carries — including a lower value.
     let store = Store::open_in_memory().expect("open store");
     let mut live = sample_chat("a@s.whatsapp.net", "Meike", 100);
-    live.unread_count = 0;
+    live.unread_count = 12;
     store.upsert_chat(&live).unwrap();
 
     let mut history = sample_chat("a@s.whatsapp.net", "Meike", 200);
-    history.unread_count = 69;
+    history.unread_count = 5;
     store
-        .upsert_chat_from_history(&history, true, "316")
+        .upsert_chat_from_history(&history, true, "316", Some(5))
+        .unwrap();
+    let stored = store.list_chats().unwrap().remove(0);
+    assert_eq!(stored.unread_count, 5);
+
+    // A later chunk that clears the counter clears the badge too.
+    let mut read = sample_chat("a@s.whatsapp.net", "Meike", 300);
+    read.unread_count = 0;
+    store
+        .upsert_chat_from_history(&read, true, "316", Some(0))
+        .unwrap();
+    let stored = store.list_chats().unwrap().remove(0);
+    assert_eq!(stored.unread_count, 0);
+}
+
+#[test]
+fn history_chunk_without_counter_keeps_local_unread() {
+    // Chunks that carry no unread counter (older-message backfills) must not
+    // zero the badge of a chat the server has not counted in that chunk.
+    let store = Store::open_in_memory().expect("open store");
+    let mut live = sample_chat("a@s.whatsapp.net", "Meike", 100);
+    live.unread_count = 3;
+    store.upsert_chat(&live).unwrap();
+
+    let mut backfill = sample_chat("a@s.whatsapp.net", "Meike", 200);
+    backfill.unread_count = 0;
+    store
+        .upsert_chat_from_history(&backfill, true, "316", None)
         .unwrap();
 
     let stored = store.list_chats().unwrap().remove(0);
-    assert_eq!(stored.unread_count, 0);
+    assert_eq!(stored.unread_count, 3);
 }
 
 #[test]
@@ -438,7 +538,7 @@ fn flag_patches_create_a_deferred_chat_row_before_history_sync() {
     history.is_archived = false;
     history.muted = false;
     store
-        .upsert_chat_from_history(&history, false, "alice")
+        .upsert_chat_from_history(&history, false, "alice", None)
         .unwrap();
     let chats = store.list_chats().unwrap();
     assert_eq!(chats.len(), 1);

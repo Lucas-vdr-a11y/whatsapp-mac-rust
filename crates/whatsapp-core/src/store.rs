@@ -213,13 +213,19 @@ impl Store {
     ///
     /// - a real name (group subject, contact name) replaces only empty or
     ///   numeric placeholder names; an empty history name never overwrites;
-    /// - unread counts, pin/mute/archive flags and activity timestamps only
-    ///   ever move forward, so live state survives a late history chunk.
+    /// - `server_unread`, when the sync chunk carries a counter, replaces the
+    ///   locally accumulated one: the server count is the source of truth and
+    ///   the only way locally accumulated unreads ever converge again. A chunk
+    ///   without a counter (older-message backfills) keeps the local value so
+    ///   live state survives;
+    /// - pin/mute/archive flags and activity timestamps only ever move
+    ///   forward, so live state survives a late history chunk.
     pub fn upsert_chat_from_history(
         &self,
         chat: &ChatSummary,
         name_is_real: bool,
         fallback_name: &str,
+        server_unread: Option<u32>,
     ) -> Result<()> {
         let connection = self.lock()?;
         connection
@@ -242,10 +248,16 @@ impl Store {
                          chats.last_activity_ts,
                          excluded.last_activity_ts
                      ),
+                     -- The server's counter is authoritative when present;
+                     -- locally accumulated unreads only apply to chats the
+                     -- server has not counted yet (absent counter).
+                     unread_count = CASE
+                         WHEN ?12 THEN excluded.unread_count
+                         ELSE chats.unread_count
+                     END,
                      -- Live read/pin/mute/archive patches own these flags.
-                     -- A late history chunk must not re-inflate unread or
-                     -- resurrect a flag the user (or another device) cleared.
-                     unread_count = chats.unread_count,
+                     -- A late history chunk must not resurrect a flag the
+                     -- user (or another device) cleared.
                      muted = chats.muted,
                      pinned = chats.pinned,
                      is_archived = chats.is_archived",
@@ -261,6 +273,7 @@ impl Store {
                     chat.is_archived as i64,
                     i64::from(name_is_real),
                     fallback_name,
+                    i64::from(server_unread.is_some()),
                 ],
             )
             .map_err(storage_error)?;
@@ -440,13 +453,28 @@ impl Store {
         }
     }
 
-    /// Update the delivery state of an outgoing message.
+    /// Update the delivery state of an outgoing message. The update is
+    /// monotonic: receipts can arrive out of order (a late Sender receipt
+    /// after Delivered/Read), so the status only ever upgrades —
+    /// Pending < Sent < Delivered < Read < Played, with Failed terminal so no
+    /// later receipt resurrects a message the server rejected. Matching stays
+    /// by message id across all chats, as before.
     pub fn set_message_status(&self, message_id: &str, status: MessageStatus) -> Result<()> {
         let connection = self.lock()?;
         connection
             .execute(
-                "UPDATE messages SET status = ?1 WHERE id = ?2",
-                params![status_to_str(status), message_id],
+                "UPDATE messages SET status = ?1
+                 WHERE id = ?2
+                   AND ?3 > CASE status
+                       WHEN 'pending' THEN 0
+                       WHEN 'sent' THEN 1
+                       WHEN 'delivered' THEN 2
+                       WHEN 'read' THEN 3
+                       WHEN 'played' THEN 4
+                       WHEN 'failed' THEN 5
+                       ELSE 0
+                   END",
+                params![status_to_str(status), message_id, status_rank(status)],
             )
             .map_err(storage_error)?;
         Ok(())
@@ -1227,6 +1255,18 @@ fn status_from_str(value: &str) -> MessageStatus {
         "played" => MessageStatus::Played,
         "failed" => MessageStatus::Failed,
         _ => MessageStatus::Pending,
+    }
+}
+
+/// Monotonic ordering for delivery states; see `set_message_status`.
+fn status_rank(status: MessageStatus) -> i64 {
+    match status {
+        MessageStatus::Pending => 0,
+        MessageStatus::Sent => 1,
+        MessageStatus::Delivered => 2,
+        MessageStatus::Read => 3,
+        MessageStatus::Played => 4,
+        MessageStatus::Failed => 5,
     }
 }
 

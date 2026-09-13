@@ -567,6 +567,11 @@ impl WaClient {
     }
 
     /// Send a plain text message. Returns the stored local echo.
+    ///
+    /// The message is persisted with status `Pending` *before* the protocol
+    /// send (sharing a pre-generated message id with the wire send), so a
+    /// failed send survives a reload: on success the stored row is upgraded to
+    /// `Sent`, on failure it is marked `Failed` and the error is returned.
     pub async fn send_text(&self, chat_id: &Jid, text: &str) -> Result<Message> {
         let text = text.trim();
         if text.is_empty() {
@@ -575,10 +580,6 @@ impl WaClient {
 
         let client = self.client().await?;
         let to = to_upstream_jid(chat_id)?;
-        let sent = client
-            .send_message(&to, wa::Message::text(text))
-            .await
-            .map_err(|error| CoreError::Protocol(error.to_string()))?;
 
         let sender_id = self
             .own_jid
@@ -587,15 +588,19 @@ impl WaClient {
             .and_then(|guard| guard.clone())
             .unwrap_or_else(|| Jid::new(ME_PLACEHOLDER));
 
-        let message = Message {
-            id: sent.message_id,
+        // Pre-generate the id so the stored Pending row and the actual send
+        // carry the same identity (receipts then find the row).
+        let id = client.generate_message_id();
+
+        let mut message = Message {
+            id,
             chat_id: chat_id.clone(),
             sender_id,
             from_me: true,
             timestamp: now_unix(),
             kind: MessageKind::Text,
             text: Some(text.to_owned()),
-            status: MessageStatus::Sent,
+            status: MessageStatus::Pending,
             view_once: false,
         };
 
@@ -612,7 +617,44 @@ impl WaClient {
         )?;
         self.store.upsert_message(&message)?;
         let _ = self.events.send(CoreEvent::Message(message.clone()));
-        Ok(message)
+
+        let sent = client
+            .send_message_with_options(
+                to,
+                wa::Message::text(text),
+                whatsapp_rust::send::SendOptions::default()
+                    .with_message_id(message.id.clone()),
+            )
+            .await;
+
+        match sent {
+            Ok(_) => {
+                message.status = MessageStatus::Sent;
+                if let Err(error) = self.store.set_message_status(&message.id, MessageStatus::Sent)
+                {
+                    tracing::warn!(%error, "failed to upgrade sent message status");
+                }
+                let _ = self.events.send(CoreEvent::MessageStatusChanged(
+                    MessageStatusChangedEvent {
+                        chat_id: message.chat_id.clone(),
+                        message_id: message.id.clone(),
+                        status: MessageStatus::Sent,
+                    },
+                ));
+                Ok(message)
+            }
+            Err(error) => {
+                let _ = self.store.set_message_status(&message.id, MessageStatus::Failed);
+                let _ = self.events.send(CoreEvent::MessageStatusChanged(
+                    MessageStatusChangedEvent {
+                        chat_id: message.chat_id.clone(),
+                        message_id: message.id.clone(),
+                        status: MessageStatus::Failed,
+                    },
+                ));
+                Err(CoreError::Protocol(error.to_string()))
+            }
+        }
     }
 
     /// Chats, newest activity first (pinned first).
@@ -1038,7 +1080,10 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
             let Some(status) = receipt_status(&receipt.r#type) else {
                 return;
             };
+            // Canonicalize like every other handler: a LID-addressed receipt
+            // must land on the chat row the list actually shows.
             let chat_id = from_upstream_jid(&receipt.source.chat);
+            let chat_id = store.canonical_jid(&chat_id).unwrap_or(chat_id);
             for message_id in &receipt.message_ids {
                 let message_id = message_id.to_string();
                 if let Err(error) = store.set_message_status(&message_id, status) {
@@ -1211,10 +1256,19 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
 ///
 /// Runs on a blocking thread (the caller uses `spawn_blocking`); the stream
 /// yields conversations lazily so memory stays bounded even for large blobs.
+///
+/// One bad conversation must never void the rest of the blob: the upstream
+/// stream already skips undecodable conversations (counted in
+/// `skipped_conversations()`), and store-level failures per conversation are
+/// logged and skipped. Only a fatal stream error (truncation, zlib failure)
+/// stops the import — the stream cannot recover from those, so they are
+/// logged *and* surfaced as a `CoreEvent::Error` instead of being lost
+/// silently.
 fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: &LazyHistorySync) {
     let mut stream = sync.stream();
     let mut chat_count = 0usize;
     let mut message_count = 0usize;
+    let mut aborted = false;
 
     loop {
         match stream.next_conversation() {
@@ -1234,6 +1288,11 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                     fallback_name.clone()
                 };
 
+                // The server's unread counter is the source of truth. Keep
+                // whether the chunk carried one: chunks without a counter
+                // (older-message backfills) must not zero the local value.
+                let server_unread = conversation.unread_count;
+
                 let summary = ChatSummary {
                     id: chat_id.clone(),
                     name,
@@ -1241,7 +1300,7 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                     last_activity_ts: normalize_timestamp(
                         conversation.last_msg_timestamp.unwrap_or(0),
                     ),
-                    unread_count: conversation.unread_count.unwrap_or(0),
+                    unread_count: server_unread.unwrap_or(0),
                     muted: false,
                     pinned: false,
                     is_group: chat_id.is_group(),
@@ -1250,9 +1309,12 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                     last_from_me: false,
                     last_status: None,
                 };
-                if let Err(error) =
-                    store.upsert_chat_from_history(&summary, name_is_real, &fallback_name)
-                {
+                if let Err(error) = store.upsert_chat_from_history(
+                    &summary,
+                    name_is_real,
+                    &fallback_name,
+                    server_unread,
+                ) {
                     tracing::warn!(%error, chat = %chat_id, "history: chat upsert failed");
                     continue;
                 }
@@ -1311,31 +1373,53 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
             }
             Ok(None) => break,
             Err(error) => {
-                tracing::warn!(%error, "history: stream failed");
+                // Fatal: the stream is truncated or the zlib window failed and
+                // cannot resume at the next conversation. Log it and tell the
+                // UI the import aborted so the loss is not silent.
+                tracing::warn!(%error, "history: stream failed, aborting import");
+                let _ = bus.send(CoreEvent::Error(ErrorEvent {
+                    code: "historySyncImportFailed".to_owned(),
+                    message: format!("message history import aborted: {error}"),
+                }));
+                aborted = true;
                 break;
             }
         }
     }
 
     // Call-log records live in the non-conversation remainder of the blob.
-    let call_count = match stream.remainder() {
-        Ok(rest) => {
-            let entries = crate::calls::call_log_entries(&rest);
-            if let Err(error) = crate::calls::import_call_log_into(store, &entries) {
-                tracing::warn!(%error, "history: call-log import failed");
+    // Skip it after a fatal stream error: the walker cannot resume either.
+    // (`remainder()` consumes the stream, so read the skip counter first.)
+    let skipped = stream.skipped_conversations();
+    let call_count = if aborted {
+        0
+    } else {
+        match stream.remainder() {
+            Ok(rest) => {
+                let entries = crate::calls::call_log_entries(&rest);
+                if let Err(error) = crate::calls::import_call_log_into(store, &entries) {
+                    tracing::warn!(%error, "history: call-log import failed");
+                }
+                entries.len()
             }
-            entries.len()
-        }
-        Err(error) => {
-            tracing::warn!(%error, "history: call-log remainder failed");
-            0
+            Err(error) => {
+                tracing::warn!(%error, "history: call-log remainder failed");
+                0
+            }
         }
     };
 
+    if skipped > 0 {
+        tracing::warn!(
+            skipped,
+            "history: conversations skipped (undecodable entries)"
+        );
+    }
     tracing::info!(
         chats = chat_count,
         messages = message_count,
         calls = call_count,
+        skipped,
         "history sync imported"
     );
 }
