@@ -1037,9 +1037,7 @@ impl StatusStore for Store {
                         timestamp,
                         kind: StatusKind::from_stored(row.get::<_, String>(3)?.as_str()),
                         text: row.get(4)?,
-                        background_argb: row
-                            .get::<_, Option<i64>>(5)?
-                            .map(|value| value as u32),
+                        background_argb: row.get::<_, Option<i64>>(5)?.map(|value| value as u32),
                         expires_at: timestamp.saturating_add(STATUS_TTL_SECS),
                         viewed: row.get::<_, i64>(6)? != 0,
                     })

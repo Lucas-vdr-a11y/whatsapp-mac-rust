@@ -70,6 +70,7 @@ impl WaClient {
             kind: MessageKind::Text,
             text: Some(text.to_owned()),
             status: MessageStatus::Sent,
+            view_once: false,
         };
 
         // Chat row first: the message references it.
@@ -385,6 +386,7 @@ mod tests {
             kind: MessageKind::Text,
             text: Some("hello".to_owned()),
             status: MessageStatus::Delivered,
+            view_once: false,
         }
     }
 

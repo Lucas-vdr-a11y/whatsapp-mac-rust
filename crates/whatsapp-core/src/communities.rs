@@ -306,9 +306,7 @@ fn is_invite_link(input: &str) -> bool {
     let query_target = input.starts_with("whatsapp://chat")
         || input.starts_with("https://web.whatsapp.com/")
         || input.starts_with("http://web.whatsapp.com/");
-    if query_target
-        && let Some(query) = input.split('?').nth(1)
-    {
+    if query_target && let Some(query) = input.split('?').nth(1) {
         return query.split('&').any(|pair| {
             pair.strip_prefix("code=").is_some_and(|value| {
                 let value = value.trim_end_matches('/');

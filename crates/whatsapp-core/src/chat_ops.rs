@@ -384,6 +384,7 @@ impl WaClient {
             kind,
             text,
             status: MessageStatus::Sent,
+            view_once: false,
         }
     }
 
@@ -626,6 +627,7 @@ mod tests {
             kind: MessageKind::Text,
             text: Some("hello".to_owned()),
             status: MessageStatus::Delivered,
+            view_once: false,
         }
     }
 

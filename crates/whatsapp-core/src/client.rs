@@ -773,11 +773,9 @@ fn handle_inbound_message(
     ) {
         tracing::warn!(%error, "failed to update chat activity");
     }
-    if let Err(error) = store.set_chat_last_message_meta(
-        &message.chat_id,
-        message.kind,
-        message.from_me,
-    ) {
+    if let Err(error) =
+        store.set_chat_last_message_meta(&message.chat_id, message.kind, message.from_me)
+    {
         tracing::warn!(%error, "failed to update chat preview metadata");
     }
     if let Err(error) = store.upsert_message(&message) {
@@ -1225,7 +1223,11 @@ fn reset_app_state_collection(data_dir: &std::path::Path, collection: &str) -> R
             rusqlite::params![collection],
         )
         .map_err(|error| CoreError::Storage(error.to_string()))?;
-    tracing::info!(collection, deleted, "app-state version cleared for backfill");
+    tracing::info!(
+        collection,
+        deleted,
+        "app-state version cleared for backfill"
+    );
     Ok(())
 }
 

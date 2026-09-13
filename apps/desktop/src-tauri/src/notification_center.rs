@@ -84,12 +84,7 @@ pub fn install(_app: &AppHandle) {}
 
 /// Shows a desktop notification for `chat_id` that opens the chat when clicked.
 #[cfg(target_os = "macos")]
-pub fn notify_chat(
-    app: &AppHandle,
-    chat_id: &str,
-    title: &str,
-    body: &str,
-) -> Result<(), String> {
+pub fn notify_chat(app: &AppHandle, chat_id: &str, title: &str, body: &str) -> Result<(), String> {
     if !native_delivery() {
         return plugin_chat_notification(app, chat_id, title, body);
     }
@@ -99,12 +94,7 @@ pub fn notify_chat(
 
 /// Shows a chat notification through the plugin; clicks are not reported there.
 #[cfg(not(target_os = "macos"))]
-pub fn notify_chat(
-    app: &AppHandle,
-    chat_id: &str,
-    title: &str,
-    body: &str,
-) -> Result<(), String> {
+pub fn notify_chat(app: &AppHandle, chat_id: &str, title: &str, body: &str) -> Result<(), String> {
     plugin_chat_notification(app, chat_id, title, body)
 }
 
@@ -137,10 +127,8 @@ pub async fn request_permission() -> Result<bool, String> {
                     let _ = sender.send(granted.as_bool());
                 }
             });
-        current_center().requestAuthorizationWithOptions_completionHandler(
-            authorization_options(),
-            &handler,
-        );
+        current_center()
+            .requestAuthorizationWithOptions_completionHandler(authorization_options(), &handler);
         // The framework retains its own copy of the block; dropping our handle
         // here keeps this future `Send` for Tauri's async command wrapper.
     }
@@ -219,14 +207,10 @@ define_class!(
             &self,
             _center: &UNUserNotificationCenter,
             _notification: &UNNotification,
-            completion_handler: &block2::DynBlock<
-                dyn Fn(UNNotificationPresentationOptions),
-            >,
+            completion_handler: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
         ) {
-            completion_handler.call((
-                UNNotificationPresentationOptions::Banner
-                    | UNNotificationPresentationOptions::Sound,
-            ));
+            completion_handler.call((UNNotificationPresentationOptions::Banner
+                | UNNotificationPresentationOptions::Sound,));
         }
     }
 );
@@ -312,8 +296,7 @@ fn post_native(chat_id: &str, title: &str, body: &str) {
 
     let key = NSString::from_str(CHAT_ID_KEY);
     let value = NSString::from_str(chat_id);
-    let user_info =
-        NSDictionary::<NSString, NSString>::from_retained_objects(&[&*key], &[value]);
+    let user_info = NSDictionary::<NSString, NSString>::from_retained_objects(&[&*key], &[value]);
     // SAFETY: the dictionary stores `NSString` keys and values, which are
     // valid `AnyObject`s, so reinterpreting the collection generics cannot
     // change what is stored.
@@ -340,10 +323,8 @@ fn ensure_authorization_requested() {
     }
     let handler: block2::RcBlock<dyn Fn(Bool, *mut NSError)> =
         block2::RcBlock::new(|_granted: Bool, _error: *mut NSError| {});
-    current_center().requestAuthorizationWithOptions_completionHandler(
-        authorization_options(),
-        &handler,
-    );
+    current_center()
+        .requestAuthorizationWithOptions_completionHandler(authorization_options(), &handler);
 }
 
 #[cfg(target_os = "macos")]

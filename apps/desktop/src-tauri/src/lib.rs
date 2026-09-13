@@ -16,6 +16,7 @@ mod commands_contacts;
 mod commands_groups;
 mod commands_media;
 mod commands_privacy;
+mod commands_profile;
 mod commands_statuses;
 mod deep_link;
 mod events;
@@ -26,6 +27,7 @@ mod platform;
 mod security;
 mod state;
 mod tray;
+mod windows;
 
 use std::sync::Arc;
 
@@ -214,7 +216,13 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Per-chat windows are ephemeral: do not persist or restore them
+        // across launches (`chat-*` labels), only the main window.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&["chat-*"])
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
@@ -222,6 +230,8 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        // JID → window-label registry for the per-chat windows.
+        .manage(windows::ChatWindows::default())
         .invoke_handler(tauri::generate_handler![
             app_info,
             core_connect,
@@ -250,6 +260,11 @@ pub fn run() {
             commands_privacy::privacy_get,
             commands_privacy::privacy_set,
             commands_privacy::privacy_set_disappearing_default,
+            commands_profile::profile_get,
+            commands_profile::profile_set_name,
+            commands_profile::profile_set_about,
+            commands_profile::profile_set_picture,
+            commands_profile::profile_remove_picture,
             commands_business::business_profile,
             commands_business::labels_list,
             commands_business::labels_add,
@@ -309,7 +324,9 @@ pub fn run() {
             security::security_unlock,
             deep_link::open_link,
             deep_link::deep_link_ready,
-            file_open::file_open_ready
+            file_open::file_open_ready,
+            windows::open_chat_window,
+            windows::close_chat_window
         ])
         .setup(|app| {
             // Persistent state lives under the app data directory:

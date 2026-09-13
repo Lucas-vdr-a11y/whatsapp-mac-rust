@@ -164,9 +164,7 @@ pub fn status_update_from_message(
     message: &Message,
     raw_proto: Option<&[u8]>,
 ) -> Option<StatusUpdate> {
-    if !is_status_chat(&message.chat_id)
-        || !is_status_sender(&message.sender_id)
-        || message.from_me
+    if !is_status_chat(&message.chat_id) || !is_status_sender(&message.sender_id) || message.from_me
     {
         return None;
     }

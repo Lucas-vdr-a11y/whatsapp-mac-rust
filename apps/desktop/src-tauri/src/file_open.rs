@@ -111,11 +111,7 @@ struct DeliveryInner {
 }
 
 impl OpenFilesState {
-    fn deliver<R: Runtime>(
-        &self,
-        app: &AppHandle<R>,
-        paths: Vec<String>,
-    ) -> tauri::Result<()> {
+    fn deliver<R: Runtime>(&self, app: &AppHandle<R>, paths: Vec<String>) -> tauri::Result<()> {
         let ready = {
             let mut inner = self
                 .inner
