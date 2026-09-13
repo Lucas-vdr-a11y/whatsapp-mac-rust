@@ -55,6 +55,26 @@ async fn core_logout(state: tauri::State<'_, state::AppState>) -> Result<(), Str
         .map_err(|error| error.to_string())
 }
 
+/// Stops the current attempt and requests fresh pairing QR codes.
+#[tauri::command]
+async fn core_restart_pairing(state: tauri::State<'_, state::AppState>) -> Result<(), String> {
+    state
+        .core()
+        .restart_pairing()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Deletes the local session and starts over (recovery path).
+#[tauri::command]
+async fn core_reset_session(state: tauri::State<'_, state::AppState>) -> Result<(), String> {
+    state
+        .core()
+        .reset_session()
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Sends a text message to a chat. Returns the stored local echo.
 #[tauri::command]
 async fn send_text(
@@ -182,6 +202,8 @@ pub fn run() {
             app_info,
             core_connect,
             core_logout,
+            core_restart_pairing,
+            core_reset_session,
             send_text,
             list_chats,
             list_messages,

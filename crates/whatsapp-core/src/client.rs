@@ -138,11 +138,18 @@ impl WaClient {
 
         let bot = Bot::builder()
             .with_backend(backend)
-            .on_qr_code(move |code, _timeout| {
+            .on_qr_code(move |code, timeout| {
                 let bus = bus_qr.clone();
                 async move {
-                    tracing::info!("pairing QR code received ({} bytes)", code.len());
-                    let _ = bus.send(CoreEvent::Pairing(PairingEvent::QrCode { code }));
+                    tracing::info!(
+                        "pairing QR code received ({} bytes, valid {} s)",
+                        code.len(),
+                        timeout.as_secs()
+                    );
+                    let _ = bus.send(CoreEvent::Pairing(PairingEvent::QrCode {
+                        code,
+                        timeout_secs: timeout.as_secs(),
+                    }));
                 }
             })
             .on_pair_code(move |code, _timeout| {
@@ -187,6 +194,7 @@ impl WaClient {
                     EventKind::Disconnected,
                     EventKind::PairSuccess,
                     EventKind::PairError,
+                    EventKind::PairingQrCodesExhausted,
                     EventKind::ConnectFailure,
                     EventKind::StreamReplaced,
                     EventKind::TemporaryBan,
@@ -253,6 +261,29 @@ impl WaClient {
         self.own_jid.lock().ok().map(|mut guard| guard.take());
         self.set_connection(ConnectionState::Disconnected, None);
         Ok(())
+    }
+
+    /// Stop the current connection attempt and start a fresh pairing flow.
+    ///
+    /// Keeps an already-linked session on disk: a paired device simply
+    /// reconnects, an unpaired one gets fresh QR refs from the server.
+    pub async fn restart_pairing(&self) -> Result<()> {
+        self.shutdown().await;
+        self.connect().await
+    }
+
+    /// Delete the local session and start a brand-new pairing flow.
+    ///
+    /// This is the recovery path when a previous linking attempt left the
+    /// session store in a state the server rejects.
+    pub async fn reset_session(&self) -> Result<()> {
+        self.shutdown().await;
+        let dir = self.config.data_dir.clone();
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).map_err(|error| CoreError::Storage(error.to_string()))?;
+        }
+        self.own_jid.lock().ok().map(|mut guard| guard.take());
+        self.connect().await
     }
 
     /// Send a plain text message. Returns the stored local echo.
@@ -425,6 +456,13 @@ fn handle_lifecycle_event(
             let _ = bus.send(CoreEvent::Pairing(PairingEvent::PairFailure {
                 reason: format!("{error:?}"),
             }));
+        }
+        Event::PairingQrCodesExhausted(exhausted) => {
+            tracing::info!(
+                disconnected = exhausted.disconnected,
+                "QR rotation budget exhausted; a restart is required"
+            );
+            let _ = bus.send(CoreEvent::Pairing(PairingEvent::QrCodesExhausted));
         }
         Event::ConnectFailure(failure) => {
             connection.store(0, Ordering::Relaxed);

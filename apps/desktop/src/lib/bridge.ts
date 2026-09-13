@@ -10,6 +10,7 @@ export function useCoreBridge(): void {
   const appendMessage = useAppStore((state) => state.appendMessage);
   const setConnection = useAppStore((state) => state.setConnection);
   const setQrCode = useAppStore((state) => state.setQrCode);
+  const setPairingExpired = useAppStore((state) => state.setPairingExpired);
   const setPairCode = useAppStore((state) => state.setPairCode);
   const markPaired = useAppStore((state) => state.markPaired);
   const setChats = useAppStore((state) => state.setChats);
@@ -46,7 +47,10 @@ export function useCoreBridge(): void {
           const payload = event.payload;
           switch (payload.kind) {
             case "qrCode":
-              setQrCode(payload.code);
+              setQrCode(payload.code, payload.timeoutSecs);
+              break;
+            case "qrCodesExhausted":
+              setPairingExpired(true);
               break;
             case "pairCode":
               setPairCode(payload.code);
@@ -56,7 +60,7 @@ export function useCoreBridge(): void {
               void hydrateChats();
               break;
             case "pairFailure":
-              setQrCode(null);
+              setPairingExpired(true);
               break;
           }
           break;
@@ -108,6 +112,7 @@ export function useCoreBridge(): void {
     appendMessage,
     setConnection,
     setQrCode,
+    setPairingExpired,
     setPairCode,
     markPaired,
     hydrateChats,

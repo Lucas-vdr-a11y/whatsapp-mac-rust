@@ -59,7 +59,8 @@ export type CoreEvent =
   | {
       type: "pairing";
       payload:
-        | { kind: "qrCode"; code: string }
+        | { kind: "qrCode"; code: string; timeoutSecs: number }
+        | { kind: "qrCodesExhausted" }
         | { kind: "pairCode"; code: string }
         | { kind: "pairSuccess"; jid: Jid }
         | { kind: "pairFailure"; reason: string };

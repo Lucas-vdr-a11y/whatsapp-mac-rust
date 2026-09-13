@@ -10,35 +10,53 @@ const MOCK_QR =
 
 export function PairingScreen() {
   const qrCode = useAppStore((state) => state.qrCode);
+  const qrTimeoutSecs = useAppStore((state) => state.qrTimeoutSecs);
+  const pairingExpired = useAppStore((state) => state.pairingExpired);
   const connection = useAppStore((state) => state.connection);
+  const [secondsLeft, setSecondsLeft] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  const startPairing = useCallback(async () => {
+  const run = useCallback(async (command: string) => {
     if (!isTauri()) return;
-    setStarting(true);
+    setBusy(true);
     setError(null);
     try {
-      await invokeCore("core_connect");
+      await invokeCore(command);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setStarting(false);
+      setBusy(false);
     }
   }, []);
 
   useEffect(() => {
-    void startPairing();
-  }, [startPairing]);
+    void run("core_connect");
+  }, [run]);
+
+  // Countdown for the current QR payload; upstream rotates it automatically.
+  useEffect(() => {
+    if (qrTimeoutSecs === null || qrCode === null) return;
+    setSecondsLeft(qrTimeoutSecs);
+    const interval = window.setInterval(() => {
+      setSecondsLeft((value) => (value > 0 ? value - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [qrTimeoutSecs, qrCode]);
 
   const payload = qrCode ?? MOCK_QR;
-  const statusText = qrCode
-    ? "Waiting for you to scan the code"
-    : connection === "connecting" || starting
-      ? "Connecting to WhatsApp…"
-      : !isTauri()
-        ? "Waiting for you to scan the code"
-        : "Preparing pairing…";
+
+  const statusText = pairingExpired
+    ? "The code expired — generate a new one to continue"
+    : qrCode
+      ? secondsLeft > 0
+        ? `Waiting for you to scan the code · refreshes in ${secondsLeft}s`
+        : "Refreshing the code…"
+      : connection === "connecting" || busy
+        ? "Connecting to WhatsApp…"
+        : !isTauri()
+          ? "Waiting for you to scan the code"
+          : "Preparing pairing…";
 
   return (
     <div className="pairing">
@@ -63,22 +81,61 @@ export function PairingScreen() {
           </li>
         </ol>
 
-        <div className="qr-card" aria-label="Pairing QR code">
-          <QRCodeSVG
-            value={payload}
-            size={224}
-            level="M"
-            bgColor="#ffffff"
-            fgColor="#111b21"
-          />
-        </div>
-
-        <p className="pairing-status">{statusText}</p>
+        {pairingExpired ? (
+          <div className="pairing-expired" role="status">
+            <p className="pairing-expired-title">This QR code has expired</p>
+            <p className="pairing-expired-body">
+              WhatsApp only shows each code for a short time. Generate a fresh
+              one and scan it promptly — the code also refreshes automatically
+              on screen.
+            </p>
+            <div className="pairing-expired-actions">
+              <button
+                type="button"
+                className="pairing-primary"
+                disabled={busy}
+                onClick={() => void run("core_restart_pairing")}
+              >
+                Generate a new code
+              </button>
+              <button
+                type="button"
+                className="pairing-secondary"
+                disabled={busy}
+                onClick={() => void run("core_reset_session")}
+              >
+                Start over (reset session)
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="qr-card" aria-label="Pairing QR code">
+              <QRCodeSVG
+                value={payload}
+                size={280}
+                level="M"
+                marginSize={2}
+                bgColor="#ffffff"
+                fgColor="#000000"
+              />
+            </div>
+            <p className="pairing-status">{statusText}</p>
+            <button
+              type="button"
+              className="pairing-link"
+              disabled={busy}
+              onClick={() => void run("core_restart_pairing")}
+            >
+              Not working? Generate a new code
+            </button>
+          </>
+        )}
 
         {error && (
           <div className="pairing-error" role="alert">
             <span>{error}</span>
-            <button type="button" onClick={() => void startPairing()}>
+            <button type="button" onClick={() => void run("core_connect")}>
               Retry
             </button>
           </div>

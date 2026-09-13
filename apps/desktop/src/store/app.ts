@@ -28,6 +28,10 @@ interface AppState {
   paired: boolean;
   /** Current QR payload while pairing, if any. */
   qrCode: string | null;
+  /** Seconds until the current QR payload is rotated, when known. */
+  qrTimeoutSecs: number | null;
+  /** True when the server's QR rotation budget ran out. */
+  pairingExpired: boolean;
   /** Alternative 8-character pairing code. */
   pairCode: string | null;
 
@@ -47,7 +51,8 @@ interface AppState {
   startChat: (id: Jid, name: string, isGroup?: boolean) => void;
 
   setConnection: (connection: ConnectionState) => void;
-  setQrCode: (code: string | null) => void;
+  setQrCode: (code: string | null, timeoutSecs?: number) => void;
+  setPairingExpired: (expired: boolean) => void;
   setPairCode: (code: string | null) => void;
   /** Mark the session usable; `jid` is present on a fresh pairing. */
   markPaired: (jid?: Jid) => void;
@@ -92,6 +97,8 @@ export const useAppStore = create<AppState>((set, get) => {
     connection: mockMode ? "connected" : "disconnected",
     paired: mockMode,
     qrCode: null,
+    qrTimeoutSecs: null,
+    pairingExpired: false,
     pairCode: null,
 
     selectChat: (id) => set({ selectedChatId: id }),
@@ -232,9 +239,27 @@ export const useAppStore = create<AppState>((set, get) => {
       }),
 
     setConnection: (connection) => set({ connection }),
-    setQrCode: (qrCode) => set({ qrCode }),
+    setQrCode: (qrCode, timeoutSecs) =>
+      set({
+        qrCode,
+        qrTimeoutSecs: timeoutSecs ?? null,
+        pairingExpired: false,
+      }),
+    setPairingExpired: (expired) =>
+      set({
+        pairingExpired: expired,
+        qrCode: null,
+        qrTimeoutSecs: null,
+      }),
     setPairCode: (pairCode) => set({ pairCode }),
-    markPaired: () => set({ paired: true, qrCode: null, pairCode: null }),
+    markPaired: () =>
+      set({
+        paired: true,
+        qrCode: null,
+        qrTimeoutSecs: null,
+        pairCode: null,
+        pairingExpired: false,
+      }),
 
     setChats: (chats) => set({ chats }),
 

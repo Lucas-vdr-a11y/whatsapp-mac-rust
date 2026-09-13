@@ -59,7 +59,12 @@ pub enum PairingEvent {
     QrCode {
         /// Raw QR string to encode.
         code: String,
+        /// Seconds until this payload is rotated.
+        timeout_secs: u64,
     },
+    /// The server's rotation budget is used up. The UI must offer a refresh;
+    /// no further codes arrive on this connection attempt.
+    QrCodesExhausted,
     /// Alternative 8-character pairing code.
     PairCode {
         /// The code to type on the phone.
