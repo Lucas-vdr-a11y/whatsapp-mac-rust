@@ -98,6 +98,16 @@ See subagent report (session log). Key file:line refs preserved in the findings 
   dd-mm-yy older. Unread badge clears immediately when the chat is opened (rail badge 10→9).
 - Conversation header: avatar + name only (no subtitle text).
 
+## Found during live verification (post A1/A2)
+
+- **S15 (P1):** opening a chat clears the UI badge but the DB keeps `unread_count` —
+  `client.mark_chat_read` (client.rs:713-721) sends the protocol read receipt BEFORE the
+  store update and aborts on protocol error, so the local counter survives. Fix: persist
+  locally regardless (store first), protocol send best-effort. Same pattern check needed for
+  other client methods that gate local persistence on protocol success.
+- Verified working after A1/A2: reaction FK warnings gone at startup; unread badge clears in
+  UI; live message arrival increments chat-list unread; windowed relaunch keeps 800x560.
+
 ## Status / repair plan
 
 - [x] Audit complete (this doc)
