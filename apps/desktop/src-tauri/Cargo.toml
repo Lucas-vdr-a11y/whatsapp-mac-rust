@@ -21,6 +21,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-deep-link = "2"
+# Native open/save dialogs; powers the attachment menu's file pickers.
+tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 # The `deep-link` feature hands forwarded CLI arguments (second app instance on
 # Windows/Linux) to `tauri-plugin-deep-link` before running our callback.

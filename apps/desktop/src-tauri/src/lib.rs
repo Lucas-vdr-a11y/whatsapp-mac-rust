@@ -7,6 +7,7 @@
 mod app_lock;
 mod commands_actions;
 mod commands_business;
+mod commands_call_log;
 mod commands_calls;
 mod commands_channels;
 mod commands_chat_ops;
@@ -16,6 +17,7 @@ mod commands_media;
 mod commands_privacy;
 mod deep_link;
 mod events;
+mod file_open;
 mod menu;
 mod platform;
 mod state;
@@ -210,6 +212,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -276,6 +279,7 @@ pub fn run() {
             commands_calls::calls_answer,
             commands_calls::calls_reject,
             commands_calls::calls_mute,
+            commands_call_log::call_log_list,
             platform::notify,
             platform::notify_for_chat,
             platform::notification_permission,
@@ -286,7 +290,8 @@ pub fn run() {
             app_lock::set_app_lock,
             app_lock::app_lock_enabled,
             deep_link::open_link,
-            deep_link::deep_link_ready
+            deep_link::deep_link_ready,
+            file_open::file_open_ready
         ])
         .setup(|app| {
             // Persistent state lives under the app data directory:
@@ -317,6 +322,8 @@ pub fn run() {
             // Menu bar extra and `rustwa://` deep links.
             tray::setup(app.handle())?;
             deep_link::setup(app.handle());
+            // Finder "Open With" / share-sheet file deliveries.
+            file_open::setup(app.handle());
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
@@ -326,11 +333,19 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building RustWA");
 
-    app.run(|app_handle, event| {
-        if let tauri::RunEvent::Exit = event {
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::Exit => {
             // Flush protocol state before the process goes away.
             let core = Arc::clone(app_handle.state::<state::AppState>().core());
             tauri::async_runtime::block_on(core.shutdown());
         }
+        // macOS delivers Finder "Open With" / Dock-drop / share-sheet files
+        // through the same `Opened` event that carries `rustwa://` URLs.
+        // `dispatch` only takes the `file://` ones.
+        #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+        tauri::RunEvent::Opened { urls } => {
+            file_open::dispatch(app_handle, &urls);
+        }
+        _ => {}
     });
 }

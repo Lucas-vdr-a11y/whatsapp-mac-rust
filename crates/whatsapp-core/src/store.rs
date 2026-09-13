@@ -18,7 +18,7 @@ use crate::error::{CoreError, Result};
 use crate::types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};
 
 /// Current schema version. Bump together with `migrations()`.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Thread-safe handle to the application database.
 pub struct Store {
@@ -86,6 +86,12 @@ impl Store {
         if version < 4 {
             connection
                 .execute_batch(include_str!("schema/004_starred.sql"))
+                .map_err(storage_error)?;
+        }
+
+        if version < 5 {
+            connection
+                .execute_batch(include_str!("schema/005_call_log.sql"))
                 .map_err(storage_error)?;
         }
 
@@ -850,5 +856,72 @@ impl MediaStore for Store {
         // the message references it.
         self.record_message_activity(chat_id, preview, message.timestamp, None, false)?;
         self.upsert_message(message)
+    }
+}
+
+/// Call-log persistence, implemented here because it needs the private
+/// connection helpers (same pattern as the media pipeline).
+use crate::calls::{CallLogRecord, CallLogStore, CallOutcome};
+
+impl CallLogStore for Store {
+    fn upsert_call_log(&self, record: &CallLogRecord) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO call_log (id, chat_id, from_me, video, outcome,
+                                      started_at, duration_secs, raw)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(id) DO UPDATE SET
+                     chat_id = excluded.chat_id,
+                     from_me = excluded.from_me,
+                     video = excluded.video,
+                     outcome = excluded.outcome,
+                     started_at = excluded.started_at,
+                     duration_secs = excluded.duration_secs,
+                     raw = excluded.raw",
+                params![
+                    &record.id,
+                    record.chat_id.as_ref().map(Jid::as_str),
+                    i64::from(record.from_me),
+                    i64::from(record.video),
+                    record.outcome.as_str(),
+                    as_i64(record.started_at),
+                    record.duration_secs.map(as_i64),
+                    record.raw.as_deref(),
+                ],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    fn list_call_log(&self, limit: u32) -> Result<Vec<CallLogRecord>> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, chat_id, from_me, video, outcome, started_at,
+                        duration_secs, raw
+                 FROM call_log
+                 ORDER BY started_at DESC, rowid DESC
+                 LIMIT ?1",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![limit], |row| {
+                Ok(CallLogRecord {
+                    id: row.get(0)?,
+                    chat_id: row.get::<_, Option<String>>(1)?.map(Jid::new),
+                    from_me: row.get::<_, i64>(2)? != 0,
+                    video: row.get::<_, i64>(3)? != 0,
+                    outcome: CallOutcome::from(row.get::<_, String>(4)?.as_str()),
+                    started_at: row.get::<_, i64>(5)?.max(0) as u64,
+                    duration_secs: row
+                        .get::<_, Option<i64>>(6)?
+                        .map(|value| value.max(0) as u64),
+                    raw: row.get(7)?,
+                })
+            })
+            .map_err(storage_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(storage_error)
     }
 }

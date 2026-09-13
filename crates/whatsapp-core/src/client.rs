@@ -727,6 +727,19 @@ fn handle_inbound_message(
         return;
     }
 
+    // In-chat call-log items are not chat bubbles; persist them as call-log
+    // rows and stop before the generic message path.
+    if let Some(mut entry) = crate::calls::call_log_entry_from_message_with_direction(
+        &context.message,
+        info.source.is_from_me,
+    ) {
+        entry.started_at_unix = Some(timestamp_to_unix(&info.timestamp) as i64);
+        if let Err(error) = crate::calls::import_call_log_into(store, &[entry]) {
+            tracing::warn!(%error, "failed to store live call-log message");
+        }
+        return;
+    }
+
     let message = Message {
         id: info.id.to_string(),
         chat_id: from_upstream_jid(&info.source.chat),
@@ -1036,9 +1049,25 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
         }
     }
 
+    // Call-log records live in the non-conversation remainder of the blob.
+    let call_count = match stream.remainder() {
+        Ok(rest) => {
+            let entries = crate::calls::call_log_entries(&rest);
+            if let Err(error) = crate::calls::import_call_log_into(store, &entries) {
+                tracing::warn!(%error, "history: call-log import failed");
+            }
+            entries.len()
+        }
+        Err(error) => {
+            tracing::warn!(%error, "history: call-log remainder failed");
+            0
+        }
+    };
+
     tracing::info!(
         chats = chat_count,
         messages = message_count,
+        calls = call_count,
         "history sync imported"
     );
 }
@@ -1114,26 +1143,30 @@ fn classify(message: &wa::Message) -> MessageKind {
     {
         return MessageKind::System;
     }
-    if message.conversation.is_some() || message.extended_text_message.is_set() {
+
+    // View-once/ephemeral/edited wrappers hide the real payload one level
+    // down; classification must look at the inner message.
+    let base = message.get_base_message();
+    if base.conversation.is_some() || base.extended_text_message.is_set() {
         return MessageKind::Text;
     }
-    if message.image_message.is_set() {
+    if base.image_message.is_set() {
         return MessageKind::Image;
     }
-    if message.video_message.is_set() {
+    if base.video_message.is_set() {
         return MessageKind::Video;
     }
-    if let Some(audio) = message.audio_message.as_option() {
+    if let Some(audio) = base.audio_message.as_option() {
         return if audio.ptt.unwrap_or(false) {
             MessageKind::VoiceNote
         } else {
             MessageKind::Audio
         };
     }
-    if message.document_message.is_set() {
+    if base.document_message.is_set() {
         return MessageKind::Document;
     }
-    if message.sticker_message.is_set() {
+    if base.sticker_message.is_set() {
         return MessageKind::Sticker;
     }
     MessageKind::Unsupported
