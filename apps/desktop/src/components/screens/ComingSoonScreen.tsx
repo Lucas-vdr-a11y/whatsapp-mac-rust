@@ -1,34 +1,12 @@
-import { Settings, UserRound } from "lucide-react";
-import { EmptyState, ScreenHeader } from "./shared";
+import { ProfileScreen } from "../settings/ProfileScreen";
+import { SettingsScreen } from "../settings/SettingsScreen";
 
 type PlaceholderSection = "settings" | "profile";
 
-const copy: Record<PlaceholderSection, { title: string; hint: string }> = {
-  settings: {
-    title: "Settings",
-    hint: "Account, privacy, notifications and appearance. Tracked on the roadmap.",
-  },
-  profile: {
-    title: "Profile",
-    hint: "Your name, photo and about text. Tracked on the roadmap.",
-  },
-};
-
-/** Fallback for rail sections that do not have a real screen yet. */
+/**
+ * Rail sections that used to be placeholders. `status`, `channels`,
+ * `communities` and `calls` are handled directly in App.tsx.
+ */
 export function ComingSoonScreen({ section }: { section: PlaceholderSection }) {
-  const Icon = section === "settings" ? Settings : UserRound;
-  const { title, hint } = copy[section];
-
-  return (
-    <section className="chat-list screen">
-      <ScreenHeader title={title} />
-      <div className="screen-body">
-        <EmptyState
-          icon={<Icon size={26} strokeWidth={1.5} />}
-          title="Not implemented yet"
-          hint={hint}
-        />
-      </div>
-    </section>
-  );
+  return section === "settings" ? <SettingsScreen /> : <ProfileScreen />;
 }

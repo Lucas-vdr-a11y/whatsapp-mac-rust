@@ -1,13 +1,13 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { applyBootTheme } from "./components/settings/theme";
 import "./styles/index.css";
 
-// Dev-only: `?theme=light` switches the palette for design review.
-const theme = new URLSearchParams(window.location.search).get("theme");
-if (theme === "light" || theme === "dark") {
-  document.documentElement.dataset.theme = theme;
-}
+// Dev-only: `?theme=light|dark` wins over the stored preference. Otherwise the
+// persisted `rustwa.theme` is applied; "system" removes the attribute so the
+// `prefers-color-scheme` rules take over.
+applyBootTheme(window.location.search);
 
 const container = document.getElementById("root");
 if (!container) throw new Error("#root is missing from index.html");
