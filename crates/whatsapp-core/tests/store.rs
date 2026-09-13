@@ -138,6 +138,34 @@ fn chat_flags_and_read_state_can_be_updated() {
 }
 
 #[test]
+fn push_names_replace_numeric_placeholders() {
+    let store = Store::open_in_memory().expect("open store");
+    let jid = Jid::new("254970750308491@lid");
+
+    // History creates the chat with a numeric placeholder name.
+    store
+        .record_message_activity(&jid, "[Message]", 100, None, false)
+        .unwrap();
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats[0].name, "254970750308491");
+
+    // A real push name later replaces it.
+    store
+        .record_message_activity(&jid, "hoi", 200, Some("Meike"), true)
+        .unwrap();
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats[0].name, "Meike");
+    assert_eq!(chats[0].unread_count, 1);
+
+    // A different push name does not clobber the resolved name.
+    store
+        .record_message_activity(&jid, "hoi weer", 300, Some("Meike (werk)"), false)
+        .unwrap();
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats[0].name, "Meike");
+}
+
+#[test]
 fn opening_twice_is_idempotent() {
     // The same in-memory store cannot be reopened, but re-running migrations
     // on one connection must be a no-op. This guards the user_version logic.

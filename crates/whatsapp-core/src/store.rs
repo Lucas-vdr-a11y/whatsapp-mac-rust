@@ -238,7 +238,14 @@ impl Store {
                      unread_count, muted, pinned, is_group, is_archived
                  ) VALUES (?1, CASE WHEN ?2 = '' THEN ?3 ELSE ?2 END, ?4, ?5, ?6, 0, 0, ?7, 0)
                  ON CONFLICT(id) DO UPDATE SET
-                     name = CASE WHEN chats.name = '' THEN excluded.name ELSE chats.name END,
+                     name = CASE
+                         -- A real push name replaces empty or numeric
+                         -- placeholder names (JID user parts), but never
+                         -- clobbers a better name.
+                         WHEN ?2 != '' AND (chats.name = '' OR chats.name = ?3)
+                             THEN ?2
+                         ELSE chats.name
+                     END,
                      last_message_preview = excluded.last_message_preview,
                      last_activity_ts = excluded.last_activity_ts,
                      unread_count = CASE

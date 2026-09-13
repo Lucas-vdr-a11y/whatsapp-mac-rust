@@ -1,6 +1,8 @@
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Archive, Bell, PinOff, Trash2 } from "lucide-react";
+import { useEffect } from "react";
 import { formatListTime } from "../lib/time";
+import { avatarSrc } from "../lib/avatar";
 import { initials } from "../lib/names";
 import type { ChatSummary, Jid } from "../lib/types";
 import { useAppStore, type ChatFilter } from "../store/app";
@@ -198,7 +200,7 @@ function ChatListItem({
         if (event.key === "Enter" || event.key === " ") onSelect();
       }}
     >
-      <div className="avatar">{initials(chat.name)}</div>
+      <ChatListAvatar chat={chat} />
 
       <div className="chat-item-body">
         <div className="chat-item-top">
@@ -230,6 +232,21 @@ function ChatListItem({
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ChatListAvatar({ chat }: { chat: ChatSummary }) {
+  const avatar = useAppStore((state) => state.avatars[chat.id]);
+  const loadAvatar = useAppStore((state) => state.loadAvatar);
+
+  useEffect(() => {
+    loadAvatar(chat.id);
+  }, [chat.id, loadAvatar]);
+
+  return (
+    <div className="avatar">
+      {avatar ? <img src={avatarSrc(avatar)} alt="" /> : initials(chat.name)}
     </div>
   );
 }

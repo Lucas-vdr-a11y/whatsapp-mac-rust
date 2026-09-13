@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { avatarSrc } from "../lib/avatar";
 import { initials } from "../lib/names";
 import { formatBubbleTime, formatDateDivider } from "../lib/time";
 import type { ChatSummary, Message, MessageStatus } from "../lib/types";
@@ -112,7 +113,7 @@ function ConversationHeader({ chat }: { chat: ChatSummary }) {
 
   return (
     <header className="conversation-header" data-tauri-drag-region>
-      <div className="avatar small">{initials(chat.name)}</div>
+      <ConversationAvatar chat={chat} />
       <div className="conversation-title">
         <span className="conversation-name">{chat.name}</span>
         <span className="conversation-subtitle">
@@ -134,6 +135,21 @@ function ConversationHeader({ chat }: { chat: ChatSummary }) {
         </button>
       </div>
     </header>
+  );
+}
+
+function ConversationAvatar({ chat }: { chat: ChatSummary }) {
+  const avatar = useAppStore((state) => state.avatars[chat.id]);
+  const loadAvatar = useAppStore((state) => state.loadAvatar);
+
+  useEffect(() => {
+    loadAvatar(chat.id);
+  }, [chat.id, loadAvatar]);
+
+  return (
+    <div className="avatar small">
+      {avatar ? <img src={avatarSrc(avatar)} alt="" /> : initials(chat.name)}
+    </div>
   );
 }
 

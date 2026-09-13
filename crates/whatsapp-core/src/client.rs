@@ -425,12 +425,18 @@ impl WaClient {
         result.map_err(|error| CoreError::Protocol(error.to_string()))
     }
 
-    async fn client(&self) -> Result<Arc<Client>> {
+    pub(crate) async fn client(&self) -> Result<Arc<Client>> {
         let guard = self.handle.lock().await;
         guard
             .as_ref()
             .map(BotHandle::client)
             .ok_or(CoreError::NotConnected)
+    }
+
+    /// Publish an event on the domain bus. Used by the message-action surface
+    /// in `actions.rs` (local echo of an outgoing quoted reply).
+    pub(crate) fn emit(&self, event: CoreEvent) {
+        let _ = self.events.send(event);
     }
 
     fn set_connection(&self, state: ConnectionState, reason: Option<String>) {
@@ -773,6 +779,16 @@ fn to_upstream_jid(jid: &Jid) -> Result<whatsapp_rust::Jid> {
 
 fn from_upstream_jid(jid: &whatsapp_rust::Jid) -> Jid {
     Jid::new(jid.to_string())
+}
+
+/// Shared with sibling modules (contacts, groups, …).
+pub(crate) fn to_upstream(jid: &Jid) -> Result<whatsapp_rust::Jid> {
+    to_upstream_jid(jid)
+}
+
+/// Shared with sibling modules (contacts, groups, …).
+pub(crate) fn from_upstream(jid: &whatsapp_rust::Jid) -> Jid {
+    from_upstream_jid(jid)
 }
 
 fn timestamp_to_unix(value: &DateTime<Utc>) -> u64 {

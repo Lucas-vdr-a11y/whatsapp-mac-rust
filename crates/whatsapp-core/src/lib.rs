@@ -13,6 +13,7 @@ pub mod actions;
 pub mod calls;
 pub mod channels;
 pub mod client;
+pub mod contacts;
 pub mod error;
 pub mod events;
 pub mod groups;
@@ -21,6 +22,7 @@ pub mod store;
 pub mod types;
 
 pub use client::{ClientConfig, EVENT_BUS_CAPACITY, WaClient};
+pub use contacts::ContactProfile;
 pub use error::{CoreError, Result};
 pub use events::CoreEvent;
 pub use groups::GroupInfo;

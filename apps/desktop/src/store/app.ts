@@ -72,10 +72,16 @@ interface AppState {
   ) => void;
   /** Typing indicators by chat, as reported by the protocol. */
   typingByChat: Record<Jid, boolean>;
+  /** Avatar URLs or local paths by chat, when resolved. */
+  avatars: Record<Jid, string>;
   /** Update the received typing state for a chat. */
   setChatTyping: (chatId: Jid, isTyping: boolean) => void;
   /** Tell the protocol that we started or stopped typing. */
   sendTyping: (chatId: Jid, typing: boolean) => void;
+  /** Cache an avatar reference for a chat. */
+  setAvatar: (chatId: Jid, avatar: string) => void;
+  /** Best-effort avatar fetch, once per chat. */
+  loadAvatar: (chatId: Jid) => void;
 }
 
 /** In a plain browser we run on mock data; inside Tauri the core fills state. */
@@ -300,6 +306,7 @@ export const useAppStore = create<AppState>((set, get) => {
       }),
 
     typingByChat: {},
+    avatars: {},
 
     setChatTyping: (chatId, isTyping) =>
       set((state) => ({
@@ -311,6 +318,24 @@ export const useAppStore = create<AppState>((set, get) => {
       void invokeCore("set_typing", { chatId, typing }).catch((error) =>
         console.error("set_typing failed", error),
       );
+    },
+
+    setAvatar: (chatId, avatar) =>
+      set((state) => ({
+        avatars: { ...state.avatars, [chatId]: avatar },
+      })),
+
+    loadAvatar: (chatId) => {
+      if (!isTauri()) return;
+      if (get().avatars[chatId]) return;
+      void invokeCore<string | null>("contacts_avatar", { jid: chatId })
+        .then((url) => {
+          if (url) get().setAvatar(chatId, url);
+        })
+        .catch(() => {
+          // Avatar resolution is best-effort and may be unavailable while
+          // the contact commands are being wired up.
+        });
     },
   };
 });
