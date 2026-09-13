@@ -194,6 +194,47 @@ fn searches_message_text_ignoring_like_wildcards() {
 }
 
 #[test]
+fn history_merge_preserves_names_and_flags() {
+    let store = Store::open_in_memory().expect("open store");
+
+    // Live state: a resolved name, pinned, unread, recent activity.
+    let mut live = sample_chat("a@s.whatsapp.net", "Meike", 100);
+    live.pinned = true;
+    live.unread_count = 4;
+    store.upsert_chat(&live).unwrap();
+
+    // A later history chunk with no name and zeroed flags must not clobber it.
+    let mut history = sample_chat("a@s.whatsapp.net", "31619446549", 200);
+    history.pinned = false;
+    history.unread_count = 0;
+    store
+        .upsert_chat_from_history(&history, false, "31619446549")
+        .unwrap();
+
+    let stored = store.list_chats().unwrap().remove(0);
+    assert_eq!(stored.name, "Meike");
+    assert!(stored.pinned);
+    assert_eq!(stored.unread_count, 4);
+    assert_eq!(stored.last_activity_ts, 200);
+
+    // A numeric placeholder chat does get a real name from history.
+    let numeric = sample_chat("b@s.whatsapp.net", "999", 10);
+    store
+        .upsert_chat_from_history(&numeric, false, "999")
+        .unwrap();
+    let real = sample_chat("b@s.whatsapp.net", "Bob", 20);
+    store.upsert_chat_from_history(&real, true, "999").unwrap();
+
+    let bob = store
+        .list_chats()
+        .unwrap()
+        .into_iter()
+        .find(|chat| chat.id == Jid::new("b@s.whatsapp.net"))
+        .expect("bob");
+    assert_eq!(bob.name, "Bob");
+}
+
+#[test]
 fn opening_twice_is_idempotent() {
     // The same in-memory store cannot be reopened, but re-running migrations
     // on one connection must be a no-op. This guards the user_version logic.

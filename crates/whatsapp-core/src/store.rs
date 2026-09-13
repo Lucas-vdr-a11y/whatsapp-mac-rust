@@ -120,6 +120,62 @@ impl Store {
         Ok(())
     }
 
+    /// Merge a history-sync conversation into the chat list without clobbering
+    /// better data:
+    ///
+    /// - a real name (group subject, contact name) replaces only empty or
+    ///   numeric placeholder names; an empty history name never overwrites;
+    /// - unread counts, pin/mute/archive flags and activity timestamps only
+    ///   ever move forward, so live state survives a late history chunk.
+    pub fn upsert_chat_from_history(
+        &self,
+        chat: &ChatSummary,
+        name_is_real: bool,
+        fallback_name: &str,
+    ) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO chats (
+                     id, name, last_message_preview, last_activity_ts,
+                     unread_count, muted, pinned, is_group, is_archived
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(id) DO UPDATE SET
+                     name = CASE
+                         WHEN ?10 AND (chats.name = '' OR chats.name = ?11)
+                             THEN excluded.name
+                         ELSE chats.name
+                     END,
+                     last_message_preview = COALESCE(
+                         excluded.last_message_preview,
+                         chats.last_message_preview
+                     ),
+                     last_activity_ts = MAX(
+                         chats.last_activity_ts,
+                         excluded.last_activity_ts
+                     ),
+                     unread_count = MAX(chats.unread_count, excluded.unread_count),
+                     muted = MAX(chats.muted, excluded.muted),
+                     pinned = MAX(chats.pinned, excluded.pinned),
+                     is_archived = MAX(chats.is_archived, excluded.is_archived)",
+                params![
+                    chat.id.as_str(),
+                    chat.name,
+                    chat.last_message_preview,
+                    as_i64(chat.last_activity_ts),
+                    chat.unread_count,
+                    chat.muted as i64,
+                    chat.pinned as i64,
+                    chat.is_group as i64,
+                    chat.is_archived as i64,
+                    i64::from(name_is_real),
+                    fallback_name,
+                ],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
     /// Insert or update a message row.
     pub fn upsert_message(&self, message: &Message) -> Result<()> {
         let connection = self.lock()?;

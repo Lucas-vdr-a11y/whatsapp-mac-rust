@@ -425,6 +425,27 @@ impl WaClient {
         result.map_err(|error| CoreError::Protocol(error.to_string()))
     }
 
+    /// Subscribe to presence (online / last seen) updates for a contact.
+    pub async fn subscribe_presence(&self, jid: &Jid) -> Result<()> {
+        let client = self.client().await?;
+        client
+            .presence()
+            .subscribe(to_upstream_jid(jid)?)
+            .await
+            .map_err(|error| CoreError::Protocol(error.to_string()))
+    }
+
+    /// Stop receiving presence updates for a contact.
+    pub async fn unsubscribe_presence(&self, jid: &Jid) -> Result<()> {
+        let client = self.client().await?;
+        let jid = to_upstream_jid(jid)?;
+        client
+            .presence()
+            .unsubscribe(&jid)
+            .await
+            .map_err(|error| CoreError::Protocol(error.to_string()))
+    }
+
     pub(crate) async fn client(&self) -> Result<Arc<Client>> {
         let guard = self.handle.lock().await;
         guard
@@ -610,10 +631,12 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                 }
 
                 let history_name = conversation.name.clone().unwrap_or_default();
-                let name = if history_name.trim().is_empty() {
-                    chat_id.user().to_owned()
-                } else {
+                let name_is_real = !history_name.trim().is_empty();
+                let fallback_name = chat_id.user().to_owned();
+                let name = if name_is_real {
                     history_name
+                } else {
+                    fallback_name.clone()
                 };
 
                 let summary = ChatSummary {
@@ -627,13 +650,16 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                     is_group: chat_id.is_group(),
                     is_archived: conversation.archived.unwrap_or(false),
                 };
-                if let Err(error) = store.upsert_chat(&summary) {
+                if let Err(error) =
+                    store.upsert_chat_from_history(&summary, name_is_real, &fallback_name)
+                {
                     tracing::warn!(%error, chat = %chat_id, "history: chat upsert failed");
                     continue;
                 }
                 chat_count += 1;
 
                 let mut newest: Option<Message> = None;
+                let mut best_name: Option<String> = None;
                 for entry in &conversation.messages {
                     let Some(info) = entry.message.as_option() else {
                         continue;
@@ -641,6 +667,13 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                     let Some(message) = convert_history_message(info) else {
                         continue;
                     };
+                    if !message.from_me
+                        && !chat_id.is_group()
+                        && let Some(push) = info.push_name.as_deref()
+                        && !push.trim().is_empty()
+                    {
+                        best_name = Some(push.trim().to_owned());
+                    }
                     if let Err(error) = store.upsert_message(&message) {
                         tracing::warn!(%error, "history: message upsert failed");
                         continue;
@@ -659,7 +692,7 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                         &chat_id,
                         &preview_for(&newest),
                         newest.timestamp,
-                        None,
+                        best_name.as_deref(),
                         false,
                     );
                 }
