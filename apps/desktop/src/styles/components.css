@@ -1002,9 +1002,9 @@
   background-color: var(--doodle);
   -webkit-mask-image: url("../assets/doodle.svg");
   mask-image: url("../assets/doodle.svg");
-  -webkit-mask-size: 300px 300px;
-  mask-size: 300px 300px;
-  opacity: 0.55;
+  -webkit-mask-size: 190px 190px;
+  mask-size: 190px 190px;
+  opacity: 0.35;
 }
 
 .conversation > * {
