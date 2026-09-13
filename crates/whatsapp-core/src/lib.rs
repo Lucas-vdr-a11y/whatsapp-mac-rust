@@ -18,6 +18,7 @@ pub mod error;
 pub mod events;
 pub mod groups;
 pub mod media;
+pub mod privacy;
 pub mod store;
 pub mod types;
 
@@ -27,5 +28,6 @@ pub use error::{CoreError, Result};
 pub use events::CoreEvent;
 pub use groups::GroupInfo;
 pub use media::MediaFile;
+pub use privacy::PrivacySnapshot;
 pub use store::Store;
 pub use types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};

@@ -11,6 +11,7 @@ mod commands_channels;
 mod commands_contacts;
 mod commands_groups;
 mod commands_media;
+mod commands_privacy;
 mod deep_link;
 mod events;
 mod menu;
@@ -235,6 +236,11 @@ pub fn run() {
             commands_actions::actions_star,
             commands_media::media_download,
             commands_media::media_send_file,
+            commands_privacy::privacy_block,
+            commands_privacy::privacy_unblock,
+            commands_privacy::privacy_get,
+            commands_privacy::privacy_set,
+            commands_privacy::privacy_set_disappearing_default,
             commands_groups::groups_create,
             commands_groups::groups_info,
             commands_groups::groups_add,
