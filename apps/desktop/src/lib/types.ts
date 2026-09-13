@@ -72,6 +72,15 @@ export type CoreEvent =
     }
   | { type: "chatUpdated"; payload: { chatId: Jid } }
   | {
+      type: "reaction";
+      payload: { chatId: Jid; messageId: string; reactor: Jid; emoji: string };
+    }
+  | { type: "messageRevoked"; payload: { chatId: Jid; messageId: string } }
+  | {
+      type: "messageEdited";
+      payload: { chatId: Jid; messageId: string; text: string };
+    }
+  | {
       type: "typing";
       payload: { chatId: Jid; senderId: Jid; isTyping: boolean };
     }

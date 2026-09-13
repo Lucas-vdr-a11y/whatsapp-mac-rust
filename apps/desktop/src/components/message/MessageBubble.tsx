@@ -53,6 +53,12 @@ export function MessageBubble({
     y: number;
   } | null>(null);
 
+  // Protocol chatter (receipts, key shares, sync notifications) is not user
+  // content and must not render as an empty bubble.
+  if (message.kind === "system") {
+    return null;
+  }
+
   const isMedia =
     message.kind === "image" ||
     message.kind === "gif" ||

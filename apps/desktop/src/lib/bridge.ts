@@ -137,6 +137,35 @@ export function useCoreBridge(): void {
           );
           break;
 
+        case "reaction":
+          useAppStore
+            .getState()
+            .applyCoreReaction(
+              coreEvent.payload.messageId,
+              coreEvent.payload.reactor,
+              coreEvent.payload.emoji,
+            );
+          break;
+
+        case "messageEdited":
+          useAppStore
+            .getState()
+            .applyCoreEdit(
+              coreEvent.payload.chatId,
+              coreEvent.payload.messageId,
+              coreEvent.payload.text,
+            );
+          break;
+
+        case "messageRevoked":
+          useAppStore
+            .getState()
+            .applyCoreRevoke(
+              coreEvent.payload.chatId,
+              coreEvent.payload.messageId,
+            );
+          break;
+
         case "chatUpdated":
           // History sync emits bursts of these; debounce the rehydrate.
           if (hydrateTimer.current === null) {

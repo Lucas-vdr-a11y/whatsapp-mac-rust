@@ -159,6 +159,8 @@ interface AppState {
   /** Our own current reaction per message id. Optimistic until the protocol
    * exposes incoming reaction summaries. */
   myReactions: Record<string, string | null>;
+  /** Who reacted with what, per message id (from core reaction events). */
+  reactionActors: Record<string, Record<string, string>>;
   /** Toggle our reaction; picking the emoji we already used clears it. */
   toggleReaction: (
     chatId: Jid,
@@ -166,6 +168,12 @@ interface AppState {
     emoji: string,
     fromMe: boolean,
   ) => void;
+  /** Apply a reaction that arrived from the protocol. */
+  applyCoreReaction: (messageId: string, reactor: string, emoji: string) => void;
+  /** Apply an edit that arrived from the protocol. */
+  applyCoreEdit: (chatId: Jid, messageId: string, text: string) => void;
+  /** Apply a revoke that arrived from the protocol. */
+  applyCoreRevoke: (chatId: Jid, messageId: string) => void;
 
   /** Locally revoked (deleted) message ids. */
   deletedMessages: Record<string, true>;
@@ -283,6 +291,7 @@ export const useAppStore = create<AppState>((set, get) => {
     mediaMeta: {},
     reactions: {},
     myReactions: {},
+    reactionActors: {},
     deletedMessages: {},
     starred: {},
     callState: IDLE_CALL,
@@ -455,6 +464,43 @@ export const useAppStore = create<AppState>((set, get) => {
         forEveryone,
       }).catch((error) => console.error("actions_revoke failed", error));
     },
+
+    applyCoreReaction: (messageId, reactor, emoji) =>
+      set((state) => {
+        const actors = { ...(state.reactionActors[messageId] ?? {}) };
+        if (emoji) actors[reactor] = emoji;
+        else delete actors[reactor];
+
+        const counts: Record<string, number> = {};
+        for (const value of Object.values(actors)) {
+          counts[value] = (counts[value] ?? 0) + 1;
+        }
+        return {
+          reactionActors: { ...state.reactionActors, [messageId]: actors },
+          reactions: { ...state.reactions, [messageId]: counts },
+        };
+      }),
+
+    applyCoreEdit: (chatId, messageId, text) =>
+      set((state) => {
+        const messages = state.messages[chatId];
+        if (!messages) return state;
+        return {
+          messages: {
+            ...state.messages,
+            [chatId]: messages.map((message) =>
+              message.id === messageId
+                ? { ...message, text, kind: "text" as const }
+                : message,
+            ),
+          },
+        };
+      }),
+
+    applyCoreRevoke: (_chatId, messageId) =>
+      set((state) => ({
+        deletedMessages: { ...state.deletedMessages, [messageId]: true },
+      })),
 
     toggleStar: (chatId, messageId, fromMe) => {
       const star = !get().starred[messageId];
