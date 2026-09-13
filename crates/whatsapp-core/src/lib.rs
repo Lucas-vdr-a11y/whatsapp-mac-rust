@@ -11,8 +11,10 @@
 
 pub mod error;
 pub mod events;
+pub mod store;
 pub mod types;
 
 pub use error::{CoreError, Result};
 pub use events::CoreEvent;
+pub use store::Store;
 pub use types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};

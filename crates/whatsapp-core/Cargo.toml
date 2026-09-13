@@ -12,6 +12,7 @@ description = "Protocol-agnostic domain core for RustWA: connection lifecycle, e
 workspace = true
 
 [dependencies]
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
