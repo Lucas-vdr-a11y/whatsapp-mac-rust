@@ -18,7 +18,7 @@ use crate::error::{CoreError, Result};
 use crate::types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};
 
 /// Current schema version. Bump together with `migrations()`.
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// Thread-safe handle to the application database.
 pub struct Store {
@@ -92,6 +92,12 @@ impl Store {
         if version < 5 {
             connection
                 .execute_batch(include_str!("schema/005_call_log.sql"))
+                .map_err(storage_error)?;
+        }
+
+        if version < 6 {
+            connection
+                .execute_batch(include_str!("schema/006_statuses.sql"))
                 .map_err(storage_error)?;
         }
 
@@ -923,5 +929,91 @@ impl CallLogStore for Store {
             .map_err(storage_error)?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(storage_error)
+    }
+}
+
+/// Status (stories) persistence, same pattern as the media and call-log
+/// stores: the SQL needs this module's private connection helpers.
+use crate::statuses::{STATUS_TTL_SECS, StatusKind, StatusStore, StatusUpdate};
+
+impl StatusStore for Store {
+    fn upsert_status(&self, update: &StatusUpdate) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO statuses (
+                     id, sender, timestamp, kind, text, background_argb, viewed
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(id) DO UPDATE SET
+                     sender = excluded.sender,
+                     timestamp = excluded.timestamp,
+                     kind = excluded.kind,
+                     text = excluded.text,
+                     background_argb = excluded.background_argb",
+                params![
+                    &update.id,
+                    update.sender.as_str(),
+                    as_i64(update.timestamp),
+                    update.kind.as_str(),
+                    update.text.as_deref(),
+                    update.background_argb.map(|value| value as i64),
+                    i64::from(update.viewed),
+                ],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    fn list_statuses(&self, now: u64) -> Result<Vec<StatusUpdate>> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, sender, timestamp, kind, text, background_argb, viewed
+                 FROM statuses
+                 WHERE timestamp >= ?1
+                 ORDER BY timestamp DESC",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(
+                params![as_i64(now.saturating_sub(STATUS_TTL_SECS))],
+                |row| {
+                    let timestamp = row.get::<_, i64>(2)? as u64;
+                    Ok(StatusUpdate {
+                        id: row.get(0)?,
+                        sender: Jid::new(row.get::<_, String>(1)?),
+                        timestamp,
+                        kind: StatusKind::from_stored(row.get::<_, String>(3)?.as_str()),
+                        text: row.get(4)?,
+                        background_argb: row
+                            .get::<_, Option<i64>>(5)?
+                            .map(|value| value as u32),
+                        expires_at: timestamp.saturating_add(STATUS_TTL_SECS),
+                        viewed: row.get::<_, i64>(6)? != 0,
+                    })
+                },
+            )
+            .map_err(storage_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(storage_error)
+    }
+
+    fn mark_status_viewed(&self, id: &str) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute("UPDATE statuses SET viewed = 1 WHERE id = ?1", params![id])
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    fn prune_statuses(&self, before: u64) -> Result<u64> {
+        let connection = self.lock()?;
+        let deleted = connection
+            .execute(
+                "DELETE FROM statuses WHERE timestamp < ?1",
+                params![as_i64(before)],
+            )
+            .map_err(storage_error)?;
+        Ok(deleted as u64)
     }
 }

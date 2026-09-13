@@ -1,15 +1,17 @@
 /**
- * Status screen: the demo Recent/Viewed lists plus a text status composer
- * backed by `channels_post_status`. Inside the Tauri host a short note
- * explains that incoming updates arrive with the status milestone.
+ * Status screen: post a text status ("My status") and browse the status
+ * updates contacts posted in the last 24 hours. Updates arrive as messages on
+ * `status@broadcast` and are served by `statuses_list`; tapping a row opens a
+ * fullscreen viewer and reports `status_viewed`. Plain-browser runs keep a
+ * small demo list so the screen can be reviewed without the Rust host.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
-  BellOff,
   Camera,
+  ChevronLeft,
   ChevronRight,
-  Info,
   Pencil,
   Plus,
   UserRound,
@@ -17,24 +19,30 @@ import {
 } from "lucide-react";
 import { invokeCore, isTauri } from "../../lib/ipc";
 import { initials } from "../../lib/names";
-import { ScreenHeader } from "./shared";
+import { useAppStore } from "../../store/app";
+import { EmptyState, ScreenHeader } from "./shared";
 
+type StatusKind = "text" | "image" | "video" | "voice" | "unknown";
+
+/** Mirror of the core's `StatusUpdate` (camelCase over IPC). */
 interface StatusUpdate {
   id: string;
-  name: string;
-  at: string;
+  sender: string;
+  timestamp: number;
+  kind: StatusKind;
+  text: string | null;
+  backgroundArgb: number | null;
+  expiresAt: number;
   viewed: boolean;
 }
 
-const UPDATES: StatusUpdate[] = [
-  { id: "status-1", name: "Maya de Vries", at: "Today, 9:41 AM", viewed: false },
-  { id: "status-2", name: "Design Weekly", at: "Today, 8:15 AM", viewed: false },
-  { id: "status-3", name: "Tom Bakker", at: "Yesterday, 9:03 PM", viewed: false },
-  { id: "status-4", name: "Priya Nair", at: "Yesterday, 6:22 PM", viewed: true },
-  { id: "status-5", name: "Sanne & Bas", at: "Yesterday, 12:40 PM", viewed: true },
-];
-
-const MUTED_UPDATES = 3;
+/** Updates of one sender, grouped for the list. Newest first. */
+interface StatusGroup {
+  sender: string;
+  updates: StatusUpdate[];
+  latest: StatusUpdate;
+  unviewed: number;
+}
 
 /** Six status backgrounds drawn from the app palette. The core receives the
  * ARGB value; `css` mirrors it for the swatch. */
@@ -48,6 +56,55 @@ const STATUS_BACKGROUNDS = [
 ] as const;
 
 const STATUS_MAX_LENGTH = 700;
+const STATUS_TTL_SECS = 24 * 60 * 60;
+
+/** Browser-preview rows; Tauri builds start empty and fill from the core. */
+function demoUpdates(): StatusUpdate[] {
+  const now = Math.floor(Date.now() / 1000);
+  const expiresAt = now + STATUS_TTL_SECS;
+  return [
+    {
+      id: "status-demo-1",
+      sender: "alice@s.whatsapp.net",
+      timestamp: now - 9 * 60,
+      kind: "text",
+      text: "Sunrise run done. 12 km before work — the city was completely quiet.",
+      backgroundArgb: 0xff144d37,
+      expiresAt,
+      viewed: false,
+    },
+    {
+      id: "status-demo-2",
+      sender: "alice@s.whatsapp.net",
+      timestamp: now - 47 * 60,
+      kind: "image",
+      text: "Golden hour over the canals",
+      backgroundArgb: null,
+      expiresAt,
+      viewed: false,
+    },
+    {
+      id: "status-demo-3",
+      sender: "bob@s.whatsapp.net",
+      timestamp: now - 3 * 60 * 60,
+      kind: "text",
+      text: "New studio corner is finally done.",
+      backgroundArgb: 0xff53bdeb,
+      expiresAt,
+      viewed: false,
+    },
+    {
+      id: "status-demo-4",
+      sender: "marieke@s.whatsapp.net",
+      timestamp: now - 5 * 60 * 60,
+      kind: "voice",
+      text: null,
+      backgroundArgb: null,
+      expiresAt,
+      viewed: true,
+    },
+  ];
+}
 
 /** Short, non-technical message for a failed status command. */
 function friendlyError(error: unknown, fallback: string): string {
@@ -63,7 +120,7 @@ function friendlyError(error: unknown, fallback: string): string {
       raw,
     )
   ) {
-    return "Posting a status needs a linked WhatsApp session. Link your phone in Settings, then try again.";
+    return "Status updates need a linked WhatsApp session. Link your phone in Settings, then try again.";
   }
   if (/not implemented|unknown command|unrecognized/i.test(raw)) {
     return "Status updates aren't available in this build yet.";
@@ -71,9 +128,68 @@ function friendlyError(error: unknown, fallback: string): string {
   return raw;
 }
 
+/** 0xAARRGGBB background to a CSS color (alpha ignored; the viewer is dark). */
+function argbToCss(argb: number | null): string {
+  const value = (argb ?? 0xff144d37) >>> 0;
+  return `#${(value & 0xffffff).toString(16).padStart(6, "0")}`;
+}
+
+/** Placeholder copy for updates whose text is not available. */
+function updateLabel(kind: StatusKind): string {
+  switch (kind) {
+    case "image":
+      return "Photo";
+    case "video":
+      return "Video";
+    case "voice":
+      return "Voice message";
+    default:
+      return "Status update";
+  }
+}
+
+function updatePreview(update: StatusUpdate): string {
+  const text = update.text?.trim();
+  return text ? text : updateLabel(update.kind);
+}
+
+/** "09:41" today, "Yesterday, 21:03" inside the 24 h window. */
+function statusTime(unixSeconds: number): string {
+  const date = new Date(unixSeconds * 1000);
+  const now = new Date();
+  const time = date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  return sameDay ? time : `Yesterday, ${time}`;
+}
+
+/** Contact name when the chat list knows it, otherwise the JID user part. */
+function senderName(sender: string, names: Record<string, string>): string {
+  const known = names[sender];
+  if (known) return known;
+  return sender.split("@")[0] || sender;
+}
+
 export function StatusScreen() {
-  const recent = UPDATES.filter((update) => !update.viewed);
-  const viewed = UPDATES.filter((update) => update.viewed);
+  const chats = useAppStore((state) => state.chats);
+  const names = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const chat of chats) {
+      if (!chat.isGroup && chat.name) map[chat.id] = chat.name;
+    }
+    return map;
+  }, [chats]);
+
+  const [updates, setUpdates] = useState<StatusUpdate[]>(() =>
+    isTauri() ? [] : demoUpdates(),
+  );
+  const [loading, setLoading] = useState(() => isTauri());
+  const [listError, setListError] = useState<string | null>(null);
 
   const [composerOpen, setComposerOpen] = useState(false);
   const [text, setText] = useState("");
@@ -83,6 +199,32 @@ export function StatusScreen() {
   const [posting, setPosting] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<{
+    group: StatusGroup;
+    index: number;
+  } | null>(null);
+
+  const loadUpdates = useCallback(async () => {
+    if (!isTauri()) {
+      setUpdates(demoUpdates());
+      return;
+    }
+    setLoading(true);
+    setListError(null);
+    try {
+      const rows = await invokeCore<StatusUpdate[]>("statuses_list");
+      const cutoff = Math.floor(Date.now() / 1000) - STATUS_TTL_SECS;
+      setUpdates(rows.filter((row) => row.timestamp >= cutoff));
+    } catch (error) {
+      setListError(friendlyError(error, "Couldn't load status updates."));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadUpdates();
+  }, [loadUpdates]);
 
   useEffect(() => {
     if (!composerOpen) return;
@@ -95,6 +237,82 @@ export function StatusScreen() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [composerOpen, posting]);
+
+  /** Optimistically mark one update read and persist it in the core. */
+  const markViewed = useCallback((update: StatusUpdate) => {
+    if (update.viewed) return;
+    setUpdates((current) =>
+      current.map((item) =>
+        item.id === update.id ? { ...item, viewed: true } : item,
+      ),
+    );
+    if (isTauri()) {
+      void invokeCore<void>("status_viewed", { id: update.id }).catch(
+        (error) => console.error("status_viewed failed", error),
+      );
+    }
+  }, []);
+
+  const openViewer = (group: StatusGroup) => {
+    const firstUnviewed = group.updates.findIndex((update) => !update.viewed);
+    const index = firstUnviewed >= 0 ? firstUnviewed : 0;
+    setViewer({ group, index });
+    markViewed(group.updates[index]);
+  };
+
+  const navigateViewer = (delta: number) => {
+    if (!viewer) return;
+    const index = viewer.index + delta;
+    if (index < 0 || index >= viewer.group.updates.length) return;
+    setViewer({ ...viewer, index });
+    markViewed(viewer.group.updates[index]);
+  };
+
+  useEffect(() => {
+    if (!viewer) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setViewer(null);
+      } else if (event.key === "ArrowLeft" && viewer.index > 0) {
+        const index = viewer.index - 1;
+        setViewer({ ...viewer, index });
+        markViewed(viewer.group.updates[index]);
+      } else if (
+        event.key === "ArrowRight" &&
+        viewer.index < viewer.group.updates.length - 1
+      ) {
+        const index = viewer.index + 1;
+        setViewer({ ...viewer, index });
+        markViewed(viewer.group.updates[index]);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [viewer, markViewed]);
+
+  const groups = useMemo(() => {
+    const bySender = new Map<string, StatusUpdate[]>();
+    for (const update of updates) {
+      const list = bySender.get(update.sender);
+      if (list) list.push(update);
+      else bySender.set(update.sender, [update]);
+    }
+
+    const result: StatusGroup[] = [];
+    for (const [sender, items] of bySender) {
+      items.sort((a, b) => b.timestamp - a.timestamp);
+      result.push({
+        sender,
+        updates: items,
+        latest: items[0],
+        unviewed: items.filter((item) => !item.viewed).length,
+      });
+    }
+    return result.sort((a, b) => b.latest.timestamp - a.latest.timestamp);
+  }, [updates]);
+
+  const recentGroups = groups.filter((group) => group.unviewed > 0);
+  const viewedGroups = groups.filter((group) => group.unviewed === 0);
 
   const openComposer = () => {
     setPostError(null);
@@ -131,6 +349,11 @@ export function StatusScreen() {
       setPosting(false);
     }
   };
+
+  const viewedUpdate = viewer ? viewer.group.updates[viewer.index] : null;
+  const viewerName = viewer
+    ? senderName(viewer.group.sender, names)
+    : "";
 
   return (
     <section className="chat-list screen">
@@ -170,39 +393,156 @@ export function StatusScreen() {
           </span>
         </button>
 
-        {isTauri() ? (
-          <p className="status-milestone-note" role="note">
-            <Info size={14} aria-hidden="true" />
-            <span>
-              Received status updates appear here once the status milestone
-              lands. Posting your own status already works.
-            </span>
-          </p>
-        ) : null}
-
         {notice ? (
           <p className="screen-notice" role="status">
             {notice}
           </p>
         ) : null}
 
-        <div className="screen-section-label accent">Recent</div>
-        {recent.map((update) => (
-          <StatusRow key={update.id} update={update} />
+        <div className="screen-section-label accent">Recent updates</div>
+
+        {loading && updates.length === 0 ? (
+          <p className="screen-loading">Loading updates…</p>
+        ) : null}
+
+        {listError ? (
+          <div className="screen-inline-error" role="alert">
+            <p>{listError}</p>
+            <button
+              type="button"
+              className="modal-action secondary"
+              onClick={() => void loadUpdates()}
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        {!loading && !listError && groups.length === 0 ? (
+          <EmptyState
+            icon={<UserRound size={26} strokeWidth={1.5} />}
+            title="No status updates in the last 24 hours"
+            hint="Updates from your contacts will show up here."
+          />
+        ) : null}
+
+        {recentGroups.map((group) => (
+          <StatusGroupRow
+            key={group.sender}
+            group={group}
+            name={senderName(group.sender, names)}
+            onOpen={openViewer}
+          />
         ))}
 
-        <div className="screen-section-label">Viewed</div>
-        {viewed.map((update) => (
-          <StatusRow key={update.id} update={update} />
+        {viewedGroups.length > 0 ? (
+          <div className="screen-section-label">Viewed</div>
+        ) : null}
+        {viewedGroups.map((group) => (
+          <StatusGroupRow
+            key={group.sender}
+            group={group}
+            name={senderName(group.sender, names)}
+            onOpen={openViewer}
+          />
         ))}
-
-        <button type="button" className="status-muted-header">
-          <BellOff size={16} />
-          <span>Muted updates</span>
-          <span className="status-muted-count">{MUTED_UPDATES}</span>
-          <ChevronRight size={16} className="status-muted-chevron" />
-        </button>
       </div>
+
+      {viewer && viewedUpdate
+        ? createPortal(
+            <div
+              className="status-viewer"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Status from ${viewerName}`}
+              onClick={() => setViewer(null)}
+            >
+              <button
+                type="button"
+                className="status-viewer-close"
+                title="Close"
+                aria-label="Close"
+                onClick={() => setViewer(null)}
+              >
+                <X size={26} />
+              </button>
+
+              <div
+                className="status-viewer-stage"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="status-viewer-progress" aria-hidden="true">
+                  {viewer.group.updates.map((update, index) => (
+                    <span
+                      key={update.id}
+                      className={`status-viewer-segment${
+                        index <= viewer.index ? " active" : ""
+                      }`}
+                    />
+                  ))}
+                </div>
+
+                <header className="status-viewer-header">
+                  <span className="status-ring viewed">
+                    <span className="avatar">{initials(viewerName)}</span>
+                  </span>
+                  <span className="status-viewer-meta">
+                    <span className="status-viewer-name">{viewerName}</span>
+                    <span className="status-viewer-time">
+                      {statusTime(viewedUpdate.timestamp)}
+                    </span>
+                  </span>
+                </header>
+
+                <div
+                  className="status-viewer-card"
+                  style={{ background: argbToCss(viewedUpdate.backgroundArgb) }}
+                >
+                  <p className="status-viewer-text">
+                    {viewedUpdate.text?.trim() || updateLabel(viewedUpdate.kind)}
+                  </p>
+                  {!viewedUpdate.text && viewedUpdate.kind !== "text" ? (
+                    <p className="status-viewer-hint">
+                      Media previews aren't available yet.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+
+              {viewer.group.updates.length > 1 ? (
+                <>
+                  <button
+                    type="button"
+                    className="status-viewer-nav prev"
+                    title="Previous update"
+                    aria-label="Previous update"
+                    disabled={viewer.index === 0}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      navigateViewer(-1);
+                    }}
+                  >
+                    <ChevronLeft size={26} />
+                  </button>
+                  <button
+                    type="button"
+                    className="status-viewer-nav next"
+                    title="Next update"
+                    aria-label="Next update"
+                    disabled={viewer.index >= viewer.group.updates.length - 1}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      navigateViewer(1);
+                    }}
+                  >
+                    <ChevronRight size={26} />
+                  </button>
+                </>
+              ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
 
       {composerOpen ? (
         <div className="modal-backdrop" onMouseDown={closeComposer}>
@@ -296,16 +636,42 @@ export function StatusScreen() {
   );
 }
 
-function StatusRow({ update }: { update: StatusUpdate }) {
+/** One sender row: ring, name, newest update preview and time. */
+function StatusGroupRow({
+  group,
+  name,
+  onOpen,
+}: {
+  group: StatusGroup;
+  name: string;
+  onOpen: (group: StatusGroup) => void;
+}) {
+  const count = group.updates.length;
   return (
-    <div className="status-item">
-      <span className={`status-ring${update.viewed ? " viewed" : ""}`}>
-        <span className="avatar">{initials(update.name)}</span>
+    <button
+      type="button"
+      className="status-item status-item-button"
+      aria-label={
+        group.unviewed > 0
+          ? `${name}, ${group.unviewed} unviewed updates`
+          : `${name}, viewed`
+      }
+      onClick={() => onOpen(group)}
+    >
+      <span className={`status-ring${group.unviewed === 0 ? " viewed" : ""}`}>
+        <span className="avatar">{initials(name)}</span>
       </span>
       <span className="status-item-body">
-        <span className="status-item-name">{update.name}</span>
-        <span className="status-item-preview">{update.at}</span>
+        <span className="status-item-name">
+          {name}
+          {count > 1 ? (
+            <span className="status-group-count">{count}</span>
+          ) : null}
+        </span>
+        <span className="status-item-preview">
+          {statusTime(group.latest.timestamp)} · {updatePreview(group.latest)}
+        </span>
       </span>
-    </div>
+    </button>
   );
 }

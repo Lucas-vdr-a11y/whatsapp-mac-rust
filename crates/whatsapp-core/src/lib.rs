@@ -23,6 +23,7 @@ pub mod events;
 pub mod groups;
 pub mod media;
 pub mod privacy;
+pub mod statuses;
 pub mod store;
 pub mod types;
 
@@ -35,5 +36,6 @@ pub use events::CoreEvent;
 pub use groups::GroupInfo;
 pub use media::MediaFile;
 pub use privacy::PrivacySnapshot;
+pub use statuses::StatusUpdate;
 pub use store::Store;
 pub use types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};

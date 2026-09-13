@@ -777,6 +777,16 @@ fn handle_inbound_message(
         tracing::warn!(%error, "failed to store raw protobuf for inbound message");
     }
 
+    // Status updates arrive as normal messages on `status@broadcast`; keep a
+    // compact row for the Status screen and ignore non-status messages.
+    if let Err(error) = crate::statuses::import_status_message(
+        store,
+        &message,
+        Some(&context.message.encode_to_vec()),
+    ) {
+        tracing::warn!(%error, "failed to store status update");
+    }
+
     let _ = bus.send(CoreEvent::Message(message));
 }
 

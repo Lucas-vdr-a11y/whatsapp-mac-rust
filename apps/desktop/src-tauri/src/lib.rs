@@ -15,6 +15,7 @@ mod commands_contacts;
 mod commands_groups;
 mod commands_media;
 mod commands_privacy;
+mod commands_statuses;
 mod deep_link;
 mod events;
 mod file_open;
@@ -274,6 +275,8 @@ pub fn run() {
             commands_channels::channels_unfollow,
             commands_channels::channels_send,
             commands_channels::channels_post_status,
+            commands_statuses::statuses_list,
+            commands_statuses::status_viewed,
             commands_calls::calls_start,
             commands_calls::calls_end,
             commands_calls::calls_answer,
