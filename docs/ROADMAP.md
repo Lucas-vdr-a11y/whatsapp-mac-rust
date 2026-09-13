@@ -21,10 +21,10 @@ integration.
 | M2 | Chat management | Archive/pin/mute/delete/clear/mark-read, starred, local search, favorites, export | 🚧 actions sync live; search backend done; archive/starred UI pending |
 | M3 | Media experience | Images/videos/GIF/voice/documents/stickers/PTV/albums, view-once, disappearing, captions, thumbnails, auto-download settings, HD | 🚧 pipeline under construction |
 | M4 | Message actions | Reactions, edit, revoke, delete-for-me, pin, keep-in-chat, forwarding, polls/quizzes, events/RSVP | 🚧 core + UI under construction |
-| M5 | Groups & communities | Group admin, invite links, join requests, events; community create/link/join | 🚧 groups core + info panel under construction |
-| M6 | Status & channels | Status post/view/privacy/reactions; channels follow/post/react/comments | 🚧 follow/post/status-text under construction |
-| M7 | Calls | 1:1 audio → video → screen share, call links, waiting room, group calls, call history | 🔬 feasibility study + skeleton in progress |
-| M8 | Privacy & security | Privacy settings, block/report, app lock, chat lock, identity verification, passkeys, proxy | 🚧 privacy core + settings UI under construction |
+| M5 | Groups & communities | Group admin, invite links, join requests, events; community create/link/join | 🚧 groups + communities (create/join/link/invite) shipped; join requests pending |
+| M6 | Status & channels | Status post/view/privacy/reactions; channels follow/post/react/comments | 🚧 text statuses post + receive/view shipped; media statuses and channel comments pending |
+| M7 | Calls | 1:1 audio → video → screen share, call links, waiting room, group calls, call history | 🚧 1:1 audio with CoreAudio + call UI + call-log sync; upstream video is preview-grade |
+| M8 | Privacy & security | Privacy settings, block/report, app lock, chat lock, identity verification, passkeys, proxy | 🚧 privacy/blocking/Touch ID app lock shipped; chat lock, verification, proxy pending |
 | M9 | System integration | Siri intents, App Intents/Shortcuts, widgets, share sheet, menu bar, multiple windows, deep links | 🚧 tray, deep links, autostart, app lock groundwork in progress |
 | M10 | Business & power features | Business profiles, catalog, labels, quick replies, usernames | ⏳ |
 | M11 | Research | Scheduled messages, live location, message translation/transcripts | ⏳ |
