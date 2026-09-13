@@ -7,6 +7,7 @@ import {
 } from "react";
 import {
   Archive,
+  ExternalLink,
   ArrowLeft,
   Ban,
   Bell,
@@ -312,6 +313,14 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
           icon: CheckCheck,
           disabled: menu.chat.unreadCount === 0,
           onSelect: () => markRead(menu.chat.id),
+        },
+        {
+          id: "new-window",
+          label: t("chats.menu.openInNewWindow"),
+          icon: ExternalLink,
+          onSelect: () => {
+            void invokeCore("open_chat_window", { chatId: menu.chat.id });
+          },
         },
         ...businessItem,
         {
