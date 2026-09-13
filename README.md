@@ -24,17 +24,17 @@ reproduce WhatsApp's layout faithfully at this level of detail.
 
 ## Why
 
-Measured on the development machine (Mac Catalyst WhatsApp 26.33.73, idle):
+Measured on the development machine (2026-09-13, idle, macOS 26.2 / M-series):
 
-| | Official app | RustWA | Target |
+| | Official app 26.33.73 | RustWA 0.1.0 | Target |
 |---|---|---|---|
-| Install size | 637 MB | — | < 50 MB |
-| Idle memory | ~340 MB (2 processes) | — | < 150 MB |
-| Idle CPU | 0.1–2% | — | ~0% |
-| Cold start | seconds | — | < 1 s |
+| Install size | 637 MB | **15 MB** `.app` (7 MB `.dmg`) | < 50 MB |
+| Idle memory | ~340–420 MB (2 processes) | **111 MB** (1 process) | < 150 MB |
+| Idle CPU | 0.1–2% | **~0%** | ~0% |
+| Cold start (window visible) | seconds | **0.41 s** | < 1 s |
 
-*(RustWA numbers land as milestones complete; we publish measured values, not
-marketing ones.)*
+Numbers are reproducible: `du -sh` on the bundles, `ps -o rss` after 30 s idle,
+and a launch-to-window poll. They will be re-measured every milestone.
 
 ## Architecture
 
