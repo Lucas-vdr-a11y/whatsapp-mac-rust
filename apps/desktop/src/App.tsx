@@ -3,6 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 import { ChatList } from "./components/ChatList";
 import { Conversation, EmptyConversation } from "./components/Conversation";
 import { NavigationRail, type RailSection } from "./components/NavigationRail";
+import { PairingScreen } from "./components/PairingScreen";
 import { SectionPlaceholder } from "./components/SectionPlaceholder";
 import { useCoreBridge } from "./lib/bridge";
 import { selectVisibleChats, useAppStore } from "./store/app";
@@ -12,6 +13,7 @@ export default function App() {
 
   const [section, setSection] = useState<RailSection>("chats");
 
+  const paired = useAppStore((state) => state.paired);
   const chats = useAppStore(useShallow(selectVisibleChats));
   const unreadCount = useAppStore((state) =>
     state.chats.reduce(
@@ -24,6 +26,15 @@ export default function App() {
     (state) => state.chats.find((chat) => chat.id === state.selectedChatId) ?? null,
   );
   const selectChat = useAppStore((state) => state.selectChat);
+
+  // Dev-only: `?pairing` forces the linking screen in browser mock mode.
+  const forcePairing = new URLSearchParams(window.location.search).has(
+    "pairing",
+  );
+
+  if (!paired || forcePairing) {
+    return <PairingScreen />;
+  }
 
   return (
     <div className="app">
