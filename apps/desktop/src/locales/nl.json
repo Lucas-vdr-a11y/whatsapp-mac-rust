@@ -748,5 +748,6 @@
   "settings.autoDownloadDescription": "Kies wanneer foto's, video's en audio automatisch worden opgehaald.",
   "settings.autoDownloadAlways": "Altijd",
   "settings.autoDownloadWifi": "Alleen wifi",
-  "settings.autoDownloadNever": "Nooit"
+  "settings.autoDownloadNever": "Nooit",
+  "settings.media": "Media"
 }

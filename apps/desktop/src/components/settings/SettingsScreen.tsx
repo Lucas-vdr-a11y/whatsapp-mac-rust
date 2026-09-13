@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Bell,
+  Download,
   FileText,
   Info,
   Languages,
@@ -22,6 +23,11 @@ import { useAppStore } from "../../store/app";
 import { ScreenHeader } from "../screens/shared";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PrivacySection } from "./PrivacySection";
+import {
+  readAutoDownloadPolicy,
+  writeAutoDownloadPolicy,
+  type AutoDownloadPolicy,
+} from "../message/media";
 import { SecuritySection } from "./SecuritySection";
 import { SettingsRow } from "./SettingsRow";
 import { Toggle } from "./Toggle";
@@ -168,6 +174,9 @@ function describeAutostart(state: Loadable<boolean>): string {
 }
 
 export function SettingsScreen() {
+  const [autoDownload, setAutoDownload] = useState<AutoDownloadPolicy>(
+    readAutoDownloadPolicy(),
+  );
   const { t: translate, lang } = useTranslation();
   const [theme, setTheme] = useState<ThemePreference>(() =>
     readThemePreference(),
@@ -475,6 +484,39 @@ export function SettingsScreen() {
             description={translate("settings.languageDescription")}
             control={
               <LanguagePicker value={lang} onChange={changeLanguage} />
+            }
+          />
+        </div>
+
+        <h2 className="settings-section-title">
+          {translate("settings.media")}
+        </h2>
+        <div className="settings-group">
+          <SettingsRow
+            icon={<Download size={20} />}
+            label={translate("settings.autoDownload")}
+            description={translate("settings.autoDownloadDescription")}
+            control={
+              <select
+                className="settings-select"
+                value={autoDownload}
+                aria-label={translate("settings.autoDownload")}
+                onChange={(event) => {
+                  const policy = event.target.value as AutoDownloadPolicy;
+                  setAutoDownload(policy);
+                  writeAutoDownloadPolicy(policy);
+                }}
+              >
+                <option value="always">
+                  {translate("settings.autoDownloadAlways")}
+                </option>
+                <option value="wifi">
+                  {translate("settings.autoDownloadWifi")}
+                </option>
+                <option value="never">
+                  {translate("settings.autoDownloadNever")}
+                </option>
+              </select>
             }
           />
         </div>

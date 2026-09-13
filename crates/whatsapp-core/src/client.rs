@@ -750,7 +750,11 @@ fn handle_inbound_message(
         from_me: info.source.is_from_me,
         timestamp: timestamp_to_unix(&info.timestamp),
         kind: classify(&context.message),
-        text: context.message.text_content().map(str::to_owned),
+        text: context
+            .message
+            .get_caption()
+            .or_else(|| context.message.text_content())
+            .map(str::to_owned),
         status: if info.source.is_from_me {
             MessageStatus::Sent
         } else {
@@ -1132,7 +1136,12 @@ fn convert_history_message(info: &wa::WebMessageInfo) -> Option<Message> {
         from_me,
         timestamp: normalize_timestamp(info.message_timestamp.unwrap_or(0)),
         kind: body.map(classify).unwrap_or(MessageKind::Unsupported),
-        text: body.and_then(|message| message.text_content().map(str::to_owned)),
+        text: body.and_then(|message| {
+            message
+                .get_caption()
+                .or_else(|| message.text_content())
+                .map(str::to_owned)
+        }),
         status: if from_me {
             MessageStatus::Sent
         } else {
@@ -1173,7 +1182,7 @@ fn classify(message: &wa::Message) -> MessageKind {
     if base.image_message.is_set() {
         return MessageKind::Image;
     }
-    if base.video_message.is_set() {
+    if base.video_message.is_set() || base.ptv_message.is_set() {
         return MessageKind::Video;
     }
     if let Some(audio) = base.audio_message.as_option() {

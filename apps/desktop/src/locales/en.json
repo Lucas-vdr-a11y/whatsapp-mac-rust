@@ -748,5 +748,6 @@
   "settings.autoDownloadDescription": "Choose when photos, videos and audio are fetched automatically.",
   "settings.autoDownloadAlways": "Always",
   "settings.autoDownloadWifi": "Wi-Fi only",
-  "settings.autoDownloadNever": "Never"
+  "settings.autoDownloadNever": "Never",
+  "settings.media": "Media"
 }

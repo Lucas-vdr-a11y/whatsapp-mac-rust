@@ -110,8 +110,15 @@ const useTransferStore = create<TransferState>((set) => ({
 /**
  * Sends each path to `chatId` sequentially — one `media_send_file` call per
  * file — and reports success/failure per file in the shared toaster.
+ *
+ * `options.ptv` marks the batch as push-to-video ("video note") sends; the
+ * core rejects clips longer than 60 seconds.
  */
-export async function sendFiles(chatId: Jid, paths: string[]): Promise<void> {
+export async function sendFiles(
+  chatId: Jid,
+  paths: string[],
+  options: { ptv?: boolean } = {},
+): Promise<void> {
   if (paths.length === 0) return;
 
   const chatName =
@@ -128,6 +135,7 @@ export async function sendFiles(chatId: Jid, paths: string[]): Promise<void> {
         chatId,
         path: item.path,
         caption: null,
+        ptv: options.ptv === true,
       });
       store().setItemStatus(batch.id, item.id, "sent");
     } catch (error) {

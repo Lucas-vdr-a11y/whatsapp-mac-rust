@@ -1,10 +1,11 @@
 /**
  * Composer attachment ("+") menu.
  *
- * "Photos & videos" and "Document" open the native file dialog and send each
- * picked file to the selected chat via `media_send_file`; progress shows in
- * the shared transfer toaster. The remaining rows still only report the chosen
- * kind to the composer for now.
+ * "Photos & videos", "Video note" and "Document" open the native file dialog
+ * and send the picked files to the selected chat via `media_send_file`;
+ * progress shows in the shared transfer toaster. A video note is sent as a
+ * PTV (`ptv: true`) and the core caps it at 60 seconds. The remaining rows
+ * still only report the chosen kind to the composer for now.
  */
 
 import { useEffect, type ComponentType } from "react";
@@ -16,6 +17,7 @@ import {
   Contact,
   FileText,
   Image,
+  Video,
 } from "lucide-react";
 import { isTauri } from "../lib/ipc";
 import { useTranslation } from "../lib/i18n";
@@ -25,6 +27,7 @@ import { sendFiles } from "./DropOverlay";
 export type AttachmentKind =
   | "photos"
   | "camera"
+  | "videoNote"
   | "document"
   | "contact"
   | "poll"
@@ -51,6 +54,12 @@ const ATTACHMENTS: AttachmentOption[] = [
     icon: Image,
   },
   { kind: "camera", labelKey: "attach.camera", color: "#d6456b", icon: Camera },
+  {
+    kind: "videoNote",
+    labelKey: "attach.videoNote",
+    color: "#7f66ff",
+    icon: Video,
+  },
   {
     kind: "document",
     labelKey: "attach.document",
@@ -112,6 +121,14 @@ const PICKER_FILTERS: Partial<
       ],
     },
   ],
+  // Push-to-video carries an ISO base-media payload, so only the MP4 family
+  // is offered; the core re-checks the duration cap.
+  videoNote: [
+    {
+      nameKey: "attach.videoNote",
+      extensions: ["mp4", "mov", "m4v"],
+    },
+  ],
 };
 
 export interface AttachmentMenuProps {
@@ -141,17 +158,21 @@ export function AttachmentMenu({ onPick, onClose }: AttachmentMenuProps) {
     }));
 
     try {
+      const titleKey =
+        kind === "photos"
+          ? "attach.sendPhotos"
+          : kind === "videoNote"
+            ? "attach.sendVideoNote"
+            : "attach.sendDocument";
       const picked = await open({
-        title:
-          kind === "photos"
-            ? t("attach.sendPhotos")
-            : t("attach.sendDocument"),
-        multiple: true,
+        title: t(titleKey),
+        // A video note is a single short clip; the other rows batch.
+        multiple: kind !== "videoNote",
         filters,
       });
       if (!picked) return;
       const paths = Array.isArray(picked) ? picked : [picked];
-      void sendFiles(chatId, paths);
+      void sendFiles(chatId, paths, { ptv: kind === "videoNote" });
     } catch (error) {
       console.error("file picker failed", error);
     }

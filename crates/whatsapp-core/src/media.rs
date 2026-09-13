@@ -9,6 +9,9 @@
 //!   path from the content hash plus the original file name.
 //! * [`classify_outgoing`] maps a file path to the upload [`MediaType`], the
 //!   UI kind and the MIME type to advertise.
+//! * [`MediaPipeline::send_video_note`] sends a short picked video as a
+//!   push-to-video ("video note") message; [`mp4_duration_seconds`] enforces
+//!   the 60-second recorder cap without a media-parsing dependency.
 //! * [`MediaPipeline`] wires those helpers to the upstream `Client` (download,
 //!   upload, send) and to [`MediaStore`] (raw protobuf bytes + media cache
 //!   rows).
@@ -353,7 +356,26 @@ pub struct OutgoingMedia {
     pub mime: &'static str,
     /// True for image formats that must be sent as looping video.
     pub gif_playback: bool,
+    /// True when the caller asked for a push-to-video ("video note") message.
+    pub video_note: bool,
+    /// Clip length in whole seconds, when the container declares one.
+    pub duration_seconds: Option<u32>,
 }
+
+/// Caller-selected treatment of an outgoing file, on top of what its extension
+/// already implies.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SendFileOptions {
+    /// Send a short video as a push-to-video ("video note"/PTV) message: the
+    /// `VideoMessage` payload moves under `ptvMessage`, and the clip must be an
+    /// ISO base-media file (`.mp4`/`.m4v`/`.mov`) no longer than
+    /// [`VIDEO_NOTE_MAX_SECONDS`].
+    pub video_note: bool,
+}
+
+/// Longest push-to-video ("video note") clip, matching the recorder cap in the
+/// official clients. Longer clips are refused rather than silently downgraded.
+pub const VIDEO_NOTE_MAX_SECONDS: u32 = 60;
 
 /// Map a file path to the upload media type. Known image/video/audio
 /// extensions select their protobuf kind; everything else is sent as a
@@ -383,6 +405,8 @@ pub fn classify_outgoing(path: &Path) -> OutgoingMedia {
         media_type,
         mime: mime_from_extension(&extension).unwrap_or("application/octet-stream"),
         gif_playback,
+        video_note: false,
+        duration_seconds: None,
     }
 }
 
@@ -479,6 +503,63 @@ pub fn webp_dimensions(data: &[u8]) -> Option<(u32, u32)> {
         }
         _ => None,
     }
+}
+
+/// Duration in seconds of an ISO base-media (`.mp4`/`.m4v`/`.mov`) file, read
+/// from its `moov/mvhd` box.
+///
+/// Upstream ships no media parser and this crate avoids a codec dependency, so
+/// the walk is hand-rolled: only the 8/16-byte box headers are inspected, never
+/// a payload, which keeps it cheap even when `moov` trails a multi-gigabyte
+/// `mdat`. Returns `None` for containers this build cannot read.
+pub fn mp4_duration_seconds(data: &[u8]) -> Option<f64> {
+    let moov = iso_box_payload(data, b"moov")?;
+    let mvhd = iso_box_payload(moov, b"mvhd")?;
+    match mvhd.first()? {
+        // version + flags, creation + modification (u32 each), timescale, duration.
+        0 if mvhd.len() >= 20 => {
+            let timescale = u32::from_be_bytes(mvhd[12..16].try_into().ok()?) as f64;
+            let duration = u32::from_be_bytes(mvhd[16..20].try_into().ok()?) as f64;
+            (timescale > 0.0).then(|| duration / timescale)
+        }
+        // version + flags, creation + modification (u64 each), timescale, duration.
+        1 if mvhd.len() >= 32 => {
+            let timescale = u32::from_be_bytes(mvhd[20..24].try_into().ok()?) as f64;
+            let duration = u64::from_be_bytes(mvhd[24..32].try_into().ok()?) as f64;
+            (timescale > 0.0).then(|| duration / timescale)
+        }
+        _ => None,
+    }
+}
+
+/// Payload of the first direct-child box named `wanted`, honouring 32-bit,
+/// 64-bit (`size == 1`, largesize follows the type) and to-the-end (`size == 0`)
+/// box sizes. Returns `None` when the bytes run out mid-header.
+fn iso_box_payload<'a>(container: &'a [u8], wanted: &[u8; 4]) -> Option<&'a [u8]> {
+    let mut offset = 0usize;
+    while let Some(header) = container.get(offset..offset.checked_add(8)?) {
+        let size32 = u32::from_be_bytes(header[0..4].try_into().ok()?) as u64;
+        let kind: &[u8; 4] = header[4..8].try_into().ok()?;
+        let (size, header_len) = if size32 == 1 {
+            let large = container.get(offset + 8..offset + 16)?;
+            (u64::from_be_bytes(large.try_into().ok()?), 16usize)
+        } else if size32 == 0 {
+            // Box runs to the end of the container.
+            ((container.len() - offset) as u64, 8usize)
+        } else {
+            (size32, 8usize)
+        };
+        if size < header_len as u64 {
+            return None;
+        }
+        let end = offset.checked_add(usize::try_from(size).ok()?)?;
+        let payload = container.get(offset + header_len..end)?;
+        if kind == wanted {
+            return Some(payload);
+        }
+        offset = end;
+    }
+    None
 }
 
 /// The media download/upload engine.
@@ -591,6 +672,34 @@ impl MediaPipeline {
         path: &str,
         caption: Option<&str>,
     ) -> Result<Message> {
+        self.send_file_with(chat_id, path, caption, SendFileOptions::default())
+            .await
+    }
+
+    /// Send a picked video as a push-to-video ("video note") message: the same
+    /// upload/encrypt/send path as [`MediaPipeline::send_file`], but the
+    /// payload travels under `ptvMessage` and the clip must be an ISO
+    /// base-media file (`.mp4`/`.m4v`/`.mov`) at most
+    /// [`VIDEO_NOTE_MAX_SECONDS`] seconds long.
+    pub async fn send_video_note(
+        &self,
+        chat_id: &Jid,
+        path: &str,
+        caption: Option<&str>,
+    ) -> Result<Message> {
+        self.send_file_with(chat_id, path, caption, SendFileOptions { video_note: true })
+            .await
+    }
+
+    /// [`MediaPipeline::send_file`] with caller-selected treatment (see
+    /// [`SendFileOptions`]).
+    pub async fn send_file_with(
+        &self,
+        chat_id: &Jid,
+        path: &str,
+        caption: Option<&str>,
+        options: SendFileOptions,
+    ) -> Result<Message> {
         let source = Path::new(path);
         let read_path = source.to_path_buf();
         let data = tokio::task::spawn_blocking(move || std::fs::read(&read_path))
@@ -601,7 +710,31 @@ impl MediaPipeline {
             return Err(CoreError::InvalidInput(format!("{path} is empty")));
         }
 
-        let media = classify_outgoing(source);
+        let mut media = classify_outgoing(source);
+        if options.video_note {
+            if media.kind != MessageKind::Video {
+                return Err(CoreError::InvalidInput(format!(
+                    "{path} is not a video; video notes must be an MP4 or MOV clip"
+                )));
+            }
+            let seconds = mp4_duration_seconds(&data).ok_or_else(|| {
+                CoreError::InvalidInput(format!(
+                    "cannot read the duration of {path}; video notes must be MP4 or MOV"
+                ))
+            })?;
+            if seconds > f64::from(VIDEO_NOTE_MAX_SECONDS) {
+                return Err(CoreError::InvalidInput(format!(
+                    "video notes can be at most {VIDEO_NOTE_MAX_SECONDS} seconds long \
+                     (picked {seconds:.0} s)"
+                )));
+            }
+            media.video_note = true;
+            media.duration_seconds = Some(seconds.round() as u32);
+        } else if media.kind == MessageKind::Video {
+            // Regular clips get their duration declared too, when readable.
+            media.duration_seconds =
+                mp4_duration_seconds(&data).map(|seconds| seconds.round() as u32);
+        }
         let sticker = (media.kind == MessageKind::Sticker).then(|| {
             webp_dimensions(&data).map(|(width, height)| StickerDetails {
                 width,
@@ -632,9 +765,17 @@ impl MediaPipeline {
             .await
             .map_err(|error| CoreError::Protocol(format!("sending media failed: {error}")))?;
 
-        if caption.is_some() && matches!(media.kind, MessageKind::Audio | MessageKind::VoiceNote) {
-            tracing::debug!("audio messages cannot carry captions; dropping the caption");
-        }
+        // Audio messages have no caption field in the protocol, so a caption
+        // must not survive into the local echo either: the recipient never
+        // sees it, and the bubble would otherwise show text that was not sent.
+        let text = if matches!(media.kind, MessageKind::Audio | MessageKind::VoiceNote) {
+            if caption.is_some() {
+                tracing::debug!("audio messages cannot carry captions; dropping the caption");
+            }
+            None
+        } else {
+            caption.map(str::to_owned)
+        };
 
         let message = Message {
             id: sent.message_id,
@@ -646,7 +787,7 @@ impl MediaPipeline {
             from_me: true,
             timestamp: now_unix(),
             kind: media.kind,
-            text: caption.map(str::to_owned),
+            text,
             status: MessageStatus::Sent,
             // This build has no outgoing view-once send surface yet.
             view_once: false,
@@ -700,6 +841,15 @@ struct StickerDetails {
     animated: bool,
 }
 
+/// Re-home a built `VideoMessage` payload under the `ptvMessage` field, which
+/// is what a push-to-video ("video note") message is on the wire.
+fn as_video_note(message: wa::Message) -> wa::Message {
+    wa::Message {
+        ptv_message: message.video_message,
+        ..Default::default()
+    }
+}
+
 /// Build the outgoing protobuf for one uploaded file.
 fn build_outgoing_message(
     upload: whatsapp_rust::upload::UploadResponse,
@@ -718,15 +868,27 @@ fn build_outgoing_message(
                 ..Default::default()
             },
         ),
-        MessageKind::Video | MessageKind::Gif => video_message(
-            upload,
-            VideoOptions {
-                caption: caption.map(str::to_owned),
-                mimetype: Some(mime),
-                gif_playback: media.gif_playback.then_some(true),
-                ..Default::default()
-            },
-        ),
+        MessageKind::Video | MessageKind::Gif => {
+            let message = video_message(
+                upload,
+                VideoOptions {
+                    caption: caption.map(str::to_owned),
+                    mimetype: Some(mime),
+                    gif_playback: media.gif_playback.then_some(true),
+                    duration_seconds: media.duration_seconds,
+                    ..Default::default()
+                },
+            );
+            if media.video_note {
+                // Upstream has no dedicated `ptvMessage` builder, but a video
+                // note is the same `VideoMessage` payload under a different
+                // field. Re-home the builder's payload, exactly like the
+                // sticker arm below hand-assembles its message.
+                as_video_note(message)
+            } else {
+                message
+            }
+        }
         MessageKind::Document => document_message(
             upload,
             DocumentOptions {
@@ -911,28 +1073,44 @@ impl WaClient {
 
     /// Send a file from disk to a chat, with an optional caption.
     ///
-    /// The work lives in [`MediaPipeline::send_file`]; once the follow-up in
-    /// the module docs lands, this body becomes:
-    ///
-    /// ```ignore
-    /// let pipeline = MediaPipeline::new(
-    ///     self.client().await?,
-    ///     self.store(),
-    ///     self.data_dir(),
-    ///     self.own_jid(),
-    /// );
-    /// let message = pipeline.send_file(chat_id, path, caption).await?;
-    /// self.emit(CoreEvent::Message(message));
-    /// Ok(())
-    /// ```
+    /// Wraps [`MediaPipeline::send_file`] and emits the stored message as
+    /// [`CoreEvent::Message`], so the UI can append the local echo.
     pub async fn send_file(&self, chat_id: &Jid, path: &str, caption: Option<&str>) -> Result<()> {
+        self.send_file_with(chat_id, path, caption, SendFileOptions::default())
+            .await
+    }
+
+    /// Send a picked short video as a push-to-video ("video note") message.
+    ///
+    /// Mirrors [`WaClient::send_file`]; the pipeline rejects non-MP4/MOV input
+    /// and clips longer than [`VIDEO_NOTE_MAX_SECONDS`].
+    pub async fn send_video_note(
+        &self,
+        chat_id: &Jid,
+        path: &str,
+        caption: Option<&str>,
+    ) -> Result<()> {
+        self.send_file_with(chat_id, path, caption, SendFileOptions { video_note: true })
+            .await
+    }
+
+    /// Shared body of [`WaClient::send_file`] and [`WaClient::send_video_note`].
+    async fn send_file_with(
+        &self,
+        chat_id: &Jid,
+        path: &str,
+        caption: Option<&str>,
+        options: SendFileOptions,
+    ) -> Result<()> {
         let pipeline = MediaPipeline::new(
             self.client().await?,
             self.store(),
             self.data_dir(),
             self.own_jid(),
         );
-        let message = pipeline.send_file(chat_id, path, caption).await?;
+        let message = pipeline
+            .send_file_with(chat_id, path, caption, options)
+            .await?;
         self.emit(CoreEvent::Message(message));
         Ok(())
     }
@@ -1288,5 +1466,85 @@ mod tests {
         assert_eq!(webp_dimensions(&extended), Some((512, 256)));
 
         assert_eq!(webp_dimensions(b"not a webp file at all"), None);
+    }
+
+    /// Minimal ISO base-media box: 32-bit size, four-byte type, payload.
+    fn mp4_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let mut boxed = ((8 + payload.len()) as u32).to_be_bytes().to_vec();
+        boxed.extend_from_slice(kind);
+        boxed.extend_from_slice(payload);
+        boxed
+    }
+
+    /// An `ftyp`+`moov(mvhd)` file with the given movie timescale/duration.
+    fn mp4_with_mvhd(timescale: u32, duration: u64, version_one: bool) -> Vec<u8> {
+        let mut mvhd = vec![if version_one { 1 } else { 0 }, 0, 0, 0];
+        if version_one {
+            mvhd.extend_from_slice(&[0u8; 16]); // creation + modification (u64)
+            mvhd.extend_from_slice(&timescale.to_be_bytes());
+            mvhd.extend_from_slice(&duration.to_be_bytes());
+        } else {
+            mvhd.extend_from_slice(&[0u8; 8]); // creation + modification (u32)
+            mvhd.extend_from_slice(&timescale.to_be_bytes());
+            mvhd.extend_from_slice(&(duration as u32).to_be_bytes());
+        }
+        let mut file = mp4_box(b"ftyp", b"isom");
+        file.extend_from_slice(&mp4_box(b"moov", &mp4_box(b"mvhd", &mvhd)));
+        file
+    }
+
+    #[test]
+    fn reads_mp4_duration_from_mvhd() {
+        assert_eq!(
+            mp4_duration_seconds(&mp4_with_mvhd(1000, 4500, false)),
+            Some(4.5)
+        );
+        assert_eq!(
+            mp4_duration_seconds(&mp4_with_mvhd(600, 12_000, true)),
+            Some(20.0)
+        );
+        // 64-bit (`size == 1`) boxes are walked too: rebuild `moov` that way.
+        let mvhd = mp4_box(b"mvhd", &{
+            let mut payload = vec![0, 0, 0, 0];
+            payload.extend_from_slice(&[0u8; 8]);
+            payload.extend_from_slice(&1000u32.to_be_bytes());
+            payload.extend_from_slice(&90_000u32.to_be_bytes());
+            payload
+        });
+        let mut large_moov = 1u32.to_be_bytes().to_vec();
+        large_moov.extend_from_slice(b"moov");
+        large_moov.extend_from_slice(&((16 + mvhd.len()) as u64).to_be_bytes());
+        large_moov.extend_from_slice(&mvhd);
+        assert_eq!(mp4_duration_seconds(&large_moov), Some(90.0));
+
+        assert_eq!(mp4_duration_seconds(b"not an mp4 at all"), None);
+        // A zero timescale cannot be divided.
+        assert_eq!(mp4_duration_seconds(&mp4_with_mvhd(0, 4500, false)), None);
+    }
+
+    #[test]
+    fn rehomes_video_payloads_under_the_ptv_field() {
+        let video = wa::Message {
+            video_message: MessageField::some(wa::message::VideoMessage {
+                direct_path: Some("/v/ptv".to_owned()),
+                media_key: Some(vec![3u8; 32]),
+                mimetype: Some("video/mp4".to_owned()),
+                seconds: Some(12),
+                streaming_sidecar: Some(vec![9, 9, 9]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let ptv = as_video_note(video);
+        assert!(!ptv.video_message.is_set());
+        let inner = ptv.ptv_message.as_option().expect("ptv payload");
+        assert_eq!(inner.mimetype.as_deref(), Some("video/mp4"));
+        assert_eq!(inner.seconds, Some(12));
+        assert_eq!(inner.streaming_sidecar.as_deref(), Some(&[9u8, 9, 9][..]));
+        // The inbound classifier must recognise what we just built.
+        assert_eq!(
+            classify_media(&ptv).expect("ptv classifies").kind,
+            MessageKind::Video
+        );
     }
 }

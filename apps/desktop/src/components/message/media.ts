@@ -90,6 +90,12 @@ export function readAutoDownloadPolicy(): AutoDownloadPolicy {
     : DEFAULT_AUTO_DOWNLOAD_POLICY;
 }
 
+/** Persist the auto-download policy. The Settings screen owns the row; the
+ * storage key itself stays private to this module. */
+export function writeAutoDownloadPolicy(policy: AutoDownloadPolicy): void {
+  writeStorage(AUTO_DOWNLOAD_KEY, policy);
+}
+
 /** True when the policy forbids automatic media fetches. Explicit user
  * downloads stay allowed; this only drives the placeholder hint today. */
 export function isAutoDownloadDisabled(): boolean {
