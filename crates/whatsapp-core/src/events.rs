@@ -4,6 +4,8 @@
 //! desktop host forwards every variant to the webview verbatim, so the enum
 //! doubles as the IPC schema: keep it serializable and additive.
 
+#[cfg(feature = "calls")]
+use crate::calls::manager::CallUpdate;
 use crate::types::{Jid, Message, MessageStatus};
 use serde::Serialize;
 
@@ -25,8 +27,11 @@ pub enum CoreEvent {
     Typing(TypingEvent),
     /// Online/offline presence of a contact.
     Presence(PresenceEvent),
-    /// Fatal or recoverable error worth surfacing to the user.
+    /// A fatal or recoverable error worth surfacing to the user.
     Error(ErrorEvent),
+    /// A call lifecycle update (ringing, phase changes, ended, missed).
+    #[cfg(feature = "calls")]
+    Call(CallUpdate),
 }
 
 /// Connection lifecycle states.

@@ -39,12 +39,31 @@ pub const EVENT_BUS_CAPACITY: usize = 1024;
 const ME_PLACEHOLDER: &str = "me";
 
 /// Configuration for [`WaClient`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ClientConfig {
     /// Directory holding the protocol session database and future media cache.
     pub data_dir: PathBuf,
     /// Device name shown under "Linked devices" on the phone.
     pub device_name: String,
+    /// Platform capture backend for calls. `None` keeps calling disabled even
+    /// when the `calls` feature is compiled in.
+    #[cfg(feature = "calls")]
+    pub call_media: Option<Arc<dyn crate::calls::manager::CallMediaFactory>>,
+}
+
+impl std::fmt::Debug for ClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug = f.debug_struct("ClientConfig");
+        debug
+            .field("data_dir", &self.data_dir)
+            .field("device_name", &self.device_name);
+        #[cfg(feature = "calls")]
+        debug.field(
+            "call_media",
+            &self.call_media.as_ref().map(|_| "dyn CallMediaFactory"),
+        );
+        debug.finish()
+    }
 }
 
 impl ClientConfig {
@@ -53,6 +72,8 @@ impl ClientConfig {
         Self {
             data_dir: data_dir.into(),
             device_name: "RustWA".to_owned(),
+            #[cfg(feature = "calls")]
+            call_media: None,
         }
     }
 }
@@ -67,6 +88,9 @@ pub struct WaClient {
     /// 0 = disconnected, 1 = connecting, 2 = connected. Shared with event
     /// handlers so upstream lifecycle events update the state machine.
     connection: Arc<AtomicU8>,
+    /// Active call manager; present once connected with a media backend.
+    #[cfg(feature = "calls")]
+    calls: Arc<tokio::sync::Mutex<Option<crate::calls::manager::CallManager>>>,
 }
 
 impl WaClient {
@@ -80,6 +104,8 @@ impl WaClient {
             handle: Mutex::new(None),
             own_jid: Arc::new(StdMutex::new(None)),
             connection: Arc::new(AtomicU8::new(0)),
+            #[cfg(feature = "calls")]
+            calls: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -96,6 +122,12 @@ impl WaClient {
     /// Root directory for session state and cached media.
     pub(crate) fn data_dir(&self) -> &std::path::Path {
         &self.config.data_dir
+    }
+
+    /// Clone of the active call manager, when calling is available.
+    #[cfg(feature = "calls")]
+    pub(crate) async fn call_manager(&self) -> Option<crate::calls::manager::CallManager> {
+        self.calls.lock().await.clone()
     }
 
     /// Current connection state.
@@ -142,6 +174,13 @@ impl WaClient {
         let bus_messages = bus.clone();
         let bus_updates = bus.clone();
         let bus_history = bus.clone();
+        // The call event slot exists in every build; only the `calls`
+        // feature compiles the manager that consumes it.
+        #[cfg(feature = "calls")]
+        let call_slot: Arc<tokio::sync::Mutex<Option<crate::calls::manager::CallManager>>> =
+            Arc::clone(&self.calls);
+        #[cfg(not(feature = "calls"))]
+        let call_slot: Arc<()> = Arc::new(());
         let store_messages = Arc::clone(&self.store);
         let store_updates = Arc::clone(&self.store);
         let store_history = Arc::clone(&self.store);
@@ -259,9 +298,45 @@ impl WaClient {
                     }
                 }
             })
+            .on_event_for(
+                &[
+                    EventKind::IncomingCall,
+                    EventKind::MissedCall,
+                    EventKind::CallEndedElsewhere,
+                ],
+                move |event, _client| {
+                    let call_slot = Arc::clone(&call_slot);
+                    async move {
+                        #[cfg(feature = "calls")]
+                        {
+                            let guard = call_slot.lock().await;
+                            if let Some(manager) = guard.as_ref() {
+                                manager.handle_event(event.as_ref());
+                            }
+                        }
+                        #[cfg(not(feature = "calls"))]
+                        {
+                            let _ = (call_slot, event);
+                        }
+                    }
+                },
+            )
             .build()
             .await
             .map_err(|error| CoreError::Protocol(error.to_string()))?;
+
+        #[cfg(feature = "calls")]
+        if let Some(media) = self.config.call_media.clone() {
+            let manager = crate::calls::manager::CallManager::new(bot.client(), media);
+            let mut updates = manager.subscribe();
+            let bus = self.events.clone();
+            tokio::spawn(async move {
+                while let Ok(update) = updates.recv().await {
+                    let _ = bus.send(CoreEvent::Call(update));
+                }
+            });
+            *self.calls.lock().await = Some(manager);
+        }
 
         *guard = Some(bot.spawn());
         Ok(())

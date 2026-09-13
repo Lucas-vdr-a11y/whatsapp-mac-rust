@@ -31,3 +31,14 @@ whatsapp-rust = { version = "0.7.0", default-features = false, features = [
     "signal",
 ] }
 
+[features]
+# Opt-in VoIP calling (milestone M7). Enables the pure-Rust MLOW audio path
+# and the WebRTC/DTLS/SCTP relay runtime. Off by default: the default build
+# must stay free of the native/native-ish media stack. See
+# `docs/research/calls-plan.md` for the full integration plan and the
+# `client.rs`/`events.rs` wiring that `calls::CallManager` still needs.
+calls = ["whatsapp-rust/voip-mlow"]
+# Adds the optional native libopus adapter on top of `calls` (builds a
+# vendored libopus with cmake). Useful for encoded-audio producers.
+calls-opus = ["calls", "whatsapp-rust/voip-libopus"]
+
