@@ -3,8 +3,11 @@
 [![CI](https://github.com/Lucas-vdr-a11y/whatsapp-mac-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/Lucas-vdr-a11y/whatsapp-mac-rust/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **Status: pre-alpha.** The protocol core is being built now. Nothing here is
-> usable for real messaging yet — watch the milestones below.
+> **Status: pre-alpha, but it connects.** The Rust protocol core links via
+> QR pairing against real WhatsApp servers and exchanges text messages; the UI
+> is the familiar three-column layout with a live device-linking screen.
+> Media, groups, channels, calls and notifications are still on the roadmap —
+> see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 RustWA is an unofficial, from-scratch reimplementation of the WhatsApp desktop
 client for macOS. The goal is a client that feels instant, uses a fraction of
