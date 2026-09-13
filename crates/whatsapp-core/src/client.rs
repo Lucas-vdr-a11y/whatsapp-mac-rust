@@ -636,7 +636,7 @@ impl WaClient {
             actions.unpin_chat(&jid).await
         };
         result.map_err(|error| CoreError::Protocol(error.to_string()))?;
-        self.store.set_chat_pinned(chat_id, pinned)
+        self.store.set_chat_pinned(chat_id, pinned).map(|_| ())
     }
 
     /// Mute a chat indefinitely, or unmute it.
@@ -650,7 +650,7 @@ impl WaClient {
             actions.unmute_chat(&jid).await
         };
         result.map_err(|error| CoreError::Protocol(error.to_string()))?;
-        self.store.set_chat_muted(chat_id, muted)
+        self.store.set_chat_muted(chat_id, muted).map(|_| ())
     }
 
     /// Archive or unarchive a chat.
@@ -664,7 +664,7 @@ impl WaClient {
             actions.unarchive_chat(&jid, None).await
         };
         result.map_err(|error| CoreError::Protocol(error.to_string()))?;
-        self.store.set_chat_archived(chat_id, archived)
+        self.store.set_chat_archived(chat_id, archived).map(|_| ())
     }
 
     /// Mark a chat as read (clears the unread counter locally and remotely).
@@ -676,7 +676,7 @@ impl WaClient {
             .mark_chat_as_read(&jid, true, None)
             .await
             .map_err(|error| CoreError::Protocol(error.to_string()))?;
-        self.store.mark_chat_read(chat_id)
+        self.store.mark_chat_read(chat_id).map(|_| ())
     }
 
     /// Send a typing/paused chat-state update for a chat.
@@ -901,6 +901,8 @@ fn handle_inbound_message(
     }
     if let Err(error) = store.upsert_message(&message) {
         tracing::warn!(%error, "failed to store inbound message");
+    } else if let Err(error) = store.drain_pending_reactions(&message.id) {
+        tracing::warn!(%error, "failed to apply reactions buffered for the message");
     }
     if let Err(error) = store.set_raw_proto(&message.id, &context.message.encode_to_vec()) {
         tracing::warn!(%error, "failed to store raw protobuf for inbound message");
@@ -977,7 +979,9 @@ fn handle_protocol_message(
 }
 
 /// Reactions ride on their own envelope; persist the (message, reactor, emoji)
-/// triple and let the UI update the bubble.
+/// triple and let the UI update the bubble. When the target message row does
+/// not exist yet, the reaction is buffered in `pending_reactions` and drained
+/// once the message arrives.
 fn handle_reaction(
     bus: &broadcast::Sender<CoreEvent>,
     store: &Store,
@@ -995,11 +999,29 @@ fn handle_reaction(
         .as_deref()
         .map(Jid::new)
         .unwrap_or_else(|| from_upstream_jid(&info.source.chat));
+    let chat_id = store.canonical_jid(&chat_id).unwrap_or(chat_id);
     let reactor = from_upstream_jid(&info.source.sender);
     let emoji = reaction.text.as_deref().unwrap_or("");
+    let timestamp = timestamp_to_unix(&info.timestamp);
 
-    if let Err(error) = store.upsert_reaction(message_id, &reactor, emoji) {
-        tracing::warn!(%error, "failed to store reaction");
+    // A reaction can beat its message (live traffic does not wait for the
+    // history-sync import). Inserting it directly would fail on the foreign
+    // key and lose it forever, so buffer it until the message row arrives.
+    let known = match store.find_message(message_id) {
+        Ok(message) => message.is_some(),
+        Err(error) => {
+            tracing::warn!(%error, "failed to look up reaction target");
+            false
+        }
+    };
+    if known {
+        if let Err(error) = store.upsert_reaction(message_id, &reactor, emoji) {
+            tracing::warn!(%error, "failed to store reaction");
+        }
+    } else if let Err(error) =
+        store.buffer_pending_reaction(&chat_id, message_id, &reactor, emoji, timestamp)
+    {
+        tracing::warn!(%error, "failed to buffer reaction for a missing message");
     }
     let _ = bus.send(CoreEvent::Reaction(ReactionEvent {
         chat_id,
@@ -1050,14 +1072,24 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
             }
         }
         // App-state chat patches. Each one updates the local chat row and
-        // notifies the UI so the list re-renders immediately.
+        // notifies the UI so the list re-renders immediately. The update JID
+        // is canonicalized first so alias rows (LID ↔ phone number) patch the
+        // chat the list actually shows; a missing row is created on the fly
+        // (deferred) so patches that beat history sync are not lost.
         Event::ArchiveUpdate(update) => {
             let Some(archived) = update.action.archived else {
                 return;
             };
             let chat_id = from_upstream_jid(&update.jid);
+            let chat_id = store.canonical_jid(&chat_id).unwrap_or(chat_id);
             match store.set_chat_archived(&chat_id, archived) {
-                Ok(()) => {
+                Ok(deferred) => {
+                    if deferred {
+                        tracing::warn!(
+                            chat = %chat_id,
+                            "archive patch created a deferred chat row (history not synced yet)"
+                        );
+                    }
                     let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
                 }
                 Err(error) => tracing::warn!(%error, "failed to store archive update"),
@@ -1068,8 +1100,15 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
                 return;
             };
             let chat_id = from_upstream_jid(&update.jid);
+            let chat_id = store.canonical_jid(&chat_id).unwrap_or(chat_id);
             match store.set_chat_muted(&chat_id, muted) {
-                Ok(()) => {
+                Ok(deferred) => {
+                    if deferred {
+                        tracing::warn!(
+                            chat = %chat_id,
+                            "mute patch created a deferred chat row (history not synced yet)"
+                        );
+                    }
                     let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
                 }
                 Err(error) => tracing::warn!(%error, "failed to store mute update"),
@@ -1080,8 +1119,15 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
                 return;
             };
             let chat_id = from_upstream_jid(&update.jid);
+            let chat_id = store.canonical_jid(&chat_id).unwrap_or(chat_id);
             match store.set_chat_pinned(&chat_id, pinned) {
-                Ok(()) => {
+                Ok(deferred) => {
+                    if deferred {
+                        tracing::warn!(
+                            chat = %chat_id,
+                            "pin patch created a deferred chat row (history not synced yet)"
+                        );
+                    }
                     let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
                 }
                 Err(error) => tracing::warn!(%error, "failed to store pin update"),
@@ -1090,12 +1136,23 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
         Event::MarkChatAsReadUpdate(update) => {
             // `read` is absent when the patch only trims a message range;
             // treat that as "marked read" the way the official clients do.
-            if !update.action.read.unwrap_or(true) {
-                return;
-            }
+            // `read = false` means the phone marked the chat unread.
+            let read = update.action.read.unwrap_or(true);
             let chat_id = from_upstream_jid(&update.jid);
-            match store.mark_chat_read(&chat_id) {
-                Ok(()) => {
+            let chat_id = store.canonical_jid(&chat_id).unwrap_or(chat_id);
+            let result = if read {
+                store.mark_chat_read(&chat_id)
+            } else {
+                store.mark_chat_unread(&chat_id)
+            };
+            match result {
+                Ok(deferred) => {
+                    if deferred {
+                        tracing::warn!(
+                            chat = %chat_id,
+                            "read patch created a deferred chat row (history not synced yet)"
+                        );
+                    }
                     let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
                 }
                 Err(error) => tracing::warn!(%error, "failed to store read update"),
@@ -1221,6 +1278,11 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                     if let Err(error) = store.upsert_message(&message) {
                         tracing::warn!(%error, "history: message upsert failed");
                         continue;
+                    }
+                    // The message may resolve reactions that arrived before
+                    // its row existed.
+                    if let Err(error) = store.drain_pending_reactions(&message.id) {
+                        tracing::warn!(%error, "history: buffered reaction drain failed");
                     }
                     if let Some(raw) = info.message.as_option()
                         && let Err(error) = store.set_raw_proto(&message.id, &raw.encode_to_vec())

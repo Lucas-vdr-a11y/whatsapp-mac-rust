@@ -18,7 +18,7 @@ use crate::error::{CoreError, Result};
 use crate::types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};
 
 /// Current schema version. Bump together with `migrations()`.
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// Thread-safe handle to the application database.
 pub struct Store {
@@ -110,6 +110,12 @@ impl Store {
         if version < 8 {
             connection
                 .execute_batch(include_str!("schema/008_jid_aliases.sql"))
+                .map_err(storage_error)?;
+        }
+
+        if version < 9 {
+            connection
+                .execute_batch(include_str!("schema/009_pending_reactions.sql"))
                 .map_err(storage_error)?;
         }
 
@@ -271,7 +277,6 @@ impl Store {
                      id, chat_id, sender_id, from_me, timestamp, kind, text, status
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(id) DO UPDATE SET
-                     chat_id = excluded.chat_id,
                      status = excluded.status,
                      text = excluded.text",
                 params![
@@ -512,39 +517,76 @@ impl Store {
         Ok(())
     }
 
-    /// Pin or unpin a chat.
-    pub fn set_chat_pinned(&self, chat_id: &Jid, pinned: bool) -> Result<()> {
+    /// Pin or unpin a chat. Returns `true` when the patch landed on a
+    /// deferred chat row (created because history had not synced yet).
+    pub fn set_chat_pinned(&self, chat_id: &Jid, pinned: bool) -> Result<bool> {
         self.set_chat_flag("pinned", chat_id, pinned)
     }
 
-    /// Mute or unmute a chat.
-    pub fn set_chat_muted(&self, chat_id: &Jid, muted: bool) -> Result<()> {
+    /// Mute or unmute a chat. Returns `true` when the patch landed on a
+    /// deferred chat row (created because history had not synced yet).
+    pub fn set_chat_muted(&self, chat_id: &Jid, muted: bool) -> Result<bool> {
         self.set_chat_flag("muted", chat_id, muted)
     }
 
-    /// Archive or unarchive a chat.
-    pub fn set_chat_archived(&self, chat_id: &Jid, archived: bool) -> Result<()> {
+    /// Archive or unarchive a chat. Returns `true` when the patch landed on a
+    /// deferred chat row (created because history had not synced yet).
+    pub fn set_chat_archived(&self, chat_id: &Jid, archived: bool) -> Result<bool> {
         self.set_chat_flag("is_archived", chat_id, archived)
     }
 
-    /// Clear the unread counter of a chat.
-    pub fn mark_chat_read(&self, chat_id: &Jid) -> Result<()> {
+    /// Clear the unread counter of a chat. The canonical id is resolved first
+    /// so alias rows land on the same chat, and a missing row is created on
+    /// the fly so read patches that arrive before history sync survive.
+    /// Returns `true` when a deferred chat row was created.
+    pub fn mark_chat_read(&self, chat_id: &Jid) -> Result<bool> {
+        let chat_id = self.canonical_jid(chat_id)?;
         let connection = self.lock()?;
+        let deferred = !chat_row_exists(&connection, chat_id.as_str())?;
         connection
             .execute(
-                "UPDATE chats SET unread_count = 0 WHERE id = ?1",
+                "INSERT INTO chats (id, name, last_activity_ts, unread_count)
+                 VALUES (?1, '', 0, 0)
+                 ON CONFLICT(id) DO UPDATE SET unread_count = 0",
                 params![chat_id.as_str()],
             )
             .map_err(storage_error)?;
-        Ok(())
+        Ok(deferred)
+    }
+
+    /// Mark a chat unread (the phone's `MarkChatAsRead` with `read = false`).
+    /// Keeps at least one unread message so the badge stays visible; the exact
+    /// count is restored by history sync. Returns `true` when a deferred chat
+    /// row was created.
+    pub fn mark_chat_unread(&self, chat_id: &Jid) -> Result<bool> {
+        let chat_id = self.canonical_jid(chat_id)?;
+        let connection = self.lock()?;
+        let deferred = !chat_row_exists(&connection, chat_id.as_str())?;
+        connection
+            .execute(
+                "INSERT INTO chats (id, name, last_activity_ts, unread_count)
+                 VALUES (?1, '', 0, 1)
+                 ON CONFLICT(id) DO UPDATE SET unread_count = MAX(chats.unread_count, 1)",
+                params![chat_id.as_str()],
+            )
+            .map_err(storage_error)?;
+        Ok(deferred)
     }
 
     /// `column` is a hard-coded caller-supplied name, never user input.
-    fn set_chat_flag(&self, column: &str, chat_id: &Jid, value: bool) -> Result<()> {
+    ///
+    /// The canonical id is resolved first so alias rows land on the same chat,
+    /// and a missing row is created on the fly so flag patches that arrive
+    /// before history sync survive. Returns `true` when a deferred chat row
+    /// was created.
+    fn set_chat_flag(&self, column: &str, chat_id: &Jid, value: bool) -> Result<bool> {
+        let chat_id = self.canonical_jid(chat_id)?;
         let sql = match column {
-            "pinned" => "UPDATE chats SET pinned = ?1 WHERE id = ?2",
-            "muted" => "UPDATE chats SET muted = ?1 WHERE id = ?2",
-            "is_archived" => "UPDATE chats SET is_archived = ?1 WHERE id = ?2",
+            "pinned" | "muted" | "is_archived" => format!(
+                "INSERT INTO chats (id, name, last_activity_ts, {column})
+                 VALUES (?1, '', 0, ?2)
+                 ON CONFLICT(id) DO UPDATE SET {column} = ?2"
+            ),
             other => {
                 return Err(CoreError::Internal(format!(
                     "unknown chat flag column: {other}"
@@ -552,10 +594,11 @@ impl Store {
             }
         };
         let connection = self.lock()?;
+        let deferred = !chat_row_exists(&connection, chat_id.as_str())?;
         connection
-            .execute(sql, params![i64::from(value), chat_id.as_str()])
+            .execute(&sql, params![chat_id.as_str(), i64::from(value)])
             .map_err(storage_error)?;
-        Ok(())
+        Ok(deferred)
     }
 
     /// Number of stored messages, for diagnostics.
@@ -670,7 +713,8 @@ impl Store {
     }
 
     /// Record the newest message's kind and direction for the chat-list row
-    /// (tick prefix and localized media labels).
+    /// (tick prefix and localized media labels). The chat row is created on
+    /// the fly when it does not exist yet, mirroring the flag writers.
     pub fn set_chat_last_message_meta(
         &self,
         chat_id: &Jid,
@@ -681,7 +725,11 @@ impl Store {
         let connection = self.lock()?;
         connection
             .execute(
-                "UPDATE chats SET last_kind = ?2, last_from_me = ?3 WHERE id = ?1",
+                "INSERT INTO chats (id, name, last_activity_ts, last_kind, last_from_me)
+                 VALUES (?1, '', 0, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET
+                     last_kind = ?2,
+                     last_from_me = ?3",
                 params![chat_id.as_str(), kind_to_str(kind), i64::from(from_me)],
             )
             .map_err(storage_error)?;
@@ -804,6 +852,14 @@ impl Store {
         )
         .map_err(storage_error)?;
 
+        // Call-log rows carry a chat id too; moving them keeps the call
+        // history of the merged identity in one place.
+        tx.execute(
+            "UPDATE call_log SET chat_id = ?1 WHERE chat_id = ?2",
+            params![canonical.as_str(), other.as_str()],
+        )
+        .map_err(storage_error)?;
+
         if let Some(other_row) = chat_identity(&tx, other.as_str())? {
             tx.execute(
                 "INSERT INTO chats (
@@ -905,6 +961,104 @@ impl Store {
             .map_err(storage_error)
     }
 
+    /// Buffer a reaction whose message row does not exist yet (the reaction
+    /// beat the message: live traffic does not wait for history sync). The
+    /// chat id is stored canonical; a later reaction from the same actor on
+    /// the same message replaces the buffered one.
+    pub fn buffer_pending_reaction(
+        &self,
+        chat_id: &Jid,
+        message_id: &str,
+        reactor: &Jid,
+        emoji: &str,
+        timestamp: u64,
+    ) -> Result<()> {
+        let chat_id = self.canonical_jid(chat_id)?;
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO pending_reactions (chat_id, message_id, reactor, emoji, ts)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(message_id, reactor) DO UPDATE SET
+                     chat_id = excluded.chat_id,
+                     emoji = excluded.emoji,
+                     ts = excluded.ts",
+                params![
+                    chat_id.as_str(),
+                    message_id,
+                    reactor.as_str(),
+                    emoji,
+                    as_i64(timestamp),
+                ],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    /// Apply buffered reactions for `message_id` once its row exists and
+    /// delete the ones that were applied. Called right after a message insert
+    /// so late-arriving reactions are not lost. Returns how many were applied.
+    pub fn drain_pending_reactions(&self, message_id: &str) -> Result<usize> {
+        let connection = self.lock()?;
+        let known: i64 = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM messages WHERE id = ?1)",
+                params![message_id],
+                |row| row.get(0),
+            )
+            .map_err(storage_error)?;
+        if known == 0 {
+            return Ok(0);
+        }
+
+        let pending: Vec<(String, String)> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT reactor, emoji FROM pending_reactions WHERE message_id = ?1",
+                )
+                .map_err(storage_error)?;
+            let rows = statement
+                .query_map(params![message_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })
+                .map_err(storage_error)?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(storage_error)?
+        };
+
+        let mut applied = 0usize;
+        for (reactor, emoji) in pending {
+            if emoji.is_empty() {
+                // An empty emoji removes the reaction.
+                connection
+                    .execute(
+                        "DELETE FROM reactions WHERE message_id = ?1 AND reactor = ?2",
+                        params![message_id, reactor],
+                    )
+                    .map_err(storage_error)?;
+            } else {
+                connection
+                    .execute(
+                        "INSERT INTO reactions (message_id, reactor, emoji, updated_at)
+                         VALUES (?1, ?2, ?3, unixepoch())
+                         ON CONFLICT(message_id, reactor) DO UPDATE SET
+                             emoji = excluded.emoji,
+                             updated_at = excluded.updated_at",
+                        params![message_id, reactor, emoji],
+                    )
+                    .map_err(storage_error)?;
+            }
+            connection
+                .execute(
+                    "DELETE FROM pending_reactions WHERE message_id = ?1 AND reactor = ?2",
+                    params![message_id, reactor],
+                )
+                .map_err(storage_error)?;
+            applied += 1;
+        }
+        Ok(applied)
+    }
+
     /// Tombstone a message that was revoked for everyone.
     pub fn mark_message_revoked(&self, message_id: &str) -> Result<()> {
         let connection = self.lock()?;
@@ -998,6 +1152,20 @@ fn row_to_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
 
 fn storage_error(error: rusqlite::Error) -> CoreError {
     CoreError::Storage(error.to_string())
+}
+
+/// Whether a chat row for `id` exists. Flag patches compare against this so
+/// they can report that they landed on a row they created themselves (a
+/// deferred patch that arrived before history sync).
+fn chat_row_exists(connection: &Connection, id: &str) -> Result<bool> {
+    let exists: i64 = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM chats WHERE id = ?1)",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(storage_error)?;
+    Ok(exists != 0)
 }
 
 fn as_i64(value: u64) -> i64 {

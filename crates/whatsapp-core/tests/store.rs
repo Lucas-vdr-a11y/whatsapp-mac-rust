@@ -382,3 +382,235 @@ fn opening_twice_is_idempotent() {
     store.migrate_for_tests().expect("second migrate");
     assert_eq!(store.list_chats().unwrap().len(), 0);
 }
+
+#[test]
+fn flag_patches_apply_to_the_canonical_alias_row() {
+    let store = Store::open_in_memory().expect("open store");
+    let pn = "31619446549@s.whatsapp.net";
+    let lid = "254970750308491@lid";
+
+    store.upsert_chat(&sample_chat(pn, "Meike", 100)).unwrap();
+    // Register the LID ↔ phone identity the way `link_jids` does.
+    let canonical = store
+        .link_jids(&Jid::new(lid), &Jid::new(pn))
+        .unwrap()
+        .expect("merged");
+    assert_eq!(canonical.as_str(), pn);
+
+    // An app-state patch addressed to the alias JID must land on the
+    // canonical chat row, not fork a second one.
+    let alias = Jid::new(lid);
+    store.set_chat_archived(&alias, true).unwrap();
+    store.set_chat_muted(&alias, true).unwrap();
+    store.set_chat_pinned(&alias, false).unwrap();
+    store.mark_chat_read(&alias).unwrap();
+
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats.len(), 1, "no duplicate chat row for the alias");
+    let stored = &chats[0];
+    assert_eq!(stored.id.as_str(), pn);
+    assert!(stored.is_archived);
+    assert!(stored.muted);
+    assert!(!stored.pinned);
+    assert_eq!(stored.unread_count, 0);
+}
+
+#[test]
+fn flag_patches_create_a_deferred_chat_row_before_history_sync() {
+    let store = Store::open_in_memory().expect("open store");
+    let jid = Jid::new("alice@s.whatsapp.net");
+
+    // The archive patch arrives before the chat row exists.
+    assert!(store.set_chat_archived(&jid, true).unwrap(), "row created");
+
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats.len(), 1);
+    assert!(chats[0].is_archived);
+    assert_eq!(chats[0].name, "");
+    assert_eq!(chats[0].last_activity_ts, 0);
+
+    // A second patch updates the existing row: not deferred anymore.
+    assert!(!store.set_chat_muted(&jid, true).unwrap());
+
+    // The later history upsert must not resurrect the archive flag or the
+    // cleared mute flag.
+    let mut history = sample_chat("alice@s.whatsapp.net", "Alice", 500);
+    history.is_archived = false;
+    history.muted = false;
+    store
+        .upsert_chat_from_history(&history, false, "alice")
+        .unwrap();
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats.len(), 1);
+    assert!(chats[0].is_archived, "history keeps the live archive flag");
+    assert!(chats[0].muted, "history keeps the live mute flag");
+    assert_eq!(chats[0].last_activity_ts, 500);
+}
+
+#[test]
+fn read_patches_create_deferred_rows_and_support_unread() {
+    let store = Store::open_in_memory().expect("open store");
+    let jid = Jid::new("alice@s.whatsapp.net");
+
+    // A read patch before the row exists creates a deferred row.
+    assert!(store.mark_chat_read(&jid).unwrap(), "row created");
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats.len(), 1);
+    assert_eq!(chats[0].unread_count, 0);
+
+    // The phone marked the chat unread: at least one unread must show.
+    store.mark_chat_unread(&jid).unwrap();
+    assert_eq!(store.list_chats().unwrap()[0].unread_count, 1);
+
+    // An existing count is never lowered by a mark-unread patch.
+    let mut chat = sample_chat("alice@s.whatsapp.net", "Alice", 10);
+    chat.unread_count = 7;
+    store.upsert_chat(&chat).unwrap();
+    assert!(!store.mark_chat_unread(&jid).unwrap(), "row exists");
+    assert_eq!(store.list_chats().unwrap()[0].unread_count, 7);
+}
+
+#[test]
+fn reactions_arriving_early_are_buffered_then_drained() {
+    let store = Store::open_in_memory().expect("open store");
+    let chat_id = "alice@s.whatsapp.net";
+
+    // Reactions for a message that does not exist yet.
+    store
+        .buffer_pending_reaction(
+            &Jid::new(chat_id),
+            "m1",
+            &Jid::new("bob@s.whatsapp.net"),
+            "👍",
+            100,
+        )
+        .unwrap();
+    store
+        .buffer_pending_reaction(
+            &Jid::new(chat_id),
+            "m1",
+            &Jid::new("carol@s.whatsapp.net"),
+            "❤️",
+            101,
+        )
+        .unwrap();
+    // The same actor reacting again replaces the buffered value.
+    store
+        .buffer_pending_reaction(
+            &Jid::new(chat_id),
+            "m1",
+            &Jid::new("bob@s.whatsapp.net"),
+            "🎉",
+            102,
+        )
+        .unwrap();
+
+    // Draining before the message exists keeps everything buffered.
+    assert_eq!(store.drain_pending_reactions("m1").unwrap(), 0);
+
+    // The message arrives (history sync or live traffic) and drains the
+    // buffer.
+    store.upsert_chat(&sample_chat(chat_id, "Alice", 200)).unwrap();
+    store
+        .upsert_message(&sample_message("m1", chat_id, 150))
+        .unwrap();
+    assert_eq!(store.drain_pending_reactions("m1").unwrap(), 2);
+
+    let reactions = store.reactions_for_chat(&Jid::new(chat_id)).unwrap();
+    assert!(reactions.contains(&(
+        "m1".to_owned(),
+        "bob@s.whatsapp.net".to_owned(),
+        "🎉".to_owned()
+    )));
+    assert!(reactions.contains(&(
+        "m1".to_owned(),
+        "carol@s.whatsapp.net".to_owned(),
+        "❤️".to_owned()
+    )));
+
+    // The buffer is empty after draining; a second pass does nothing.
+    assert_eq!(store.drain_pending_reactions("m1").unwrap(), 0);
+
+    // A buffered removal (empty emoji) clears the stored reaction.
+    store
+        .buffer_pending_reaction(
+            &Jid::new(chat_id),
+            "m1",
+            &Jid::new("bob@s.whatsapp.net"),
+            "",
+            300,
+        )
+        .unwrap();
+    assert_eq!(store.drain_pending_reactions("m1").unwrap(), 1);
+    let reactions = store.reactions_for_chat(&Jid::new(chat_id)).unwrap();
+    assert_eq!(reactions.len(), 1);
+    assert_eq!(reactions[0].1, "carol@s.whatsapp.net");
+}
+
+#[test]
+fn upserting_a_message_keeps_its_original_chat() {
+    let store = Store::open_in_memory().expect("open store");
+    store
+        .upsert_chat(&sample_chat("a@s.whatsapp.net", "A", 10))
+        .unwrap();
+    store
+        .upsert_chat(&sample_chat("b@s.whatsapp.net", "B", 10))
+        .unwrap();
+    store
+        .upsert_message(&sample_message("m1", "a@s.whatsapp.net", 10))
+        .unwrap();
+
+    // A duplicate upsert under another (alias) chat id must not move the
+    // message out of its original conversation.
+    store
+        .upsert_message(&sample_message("m1", "b@s.whatsapp.net", 20))
+        .unwrap();
+
+    let in_a = store.list_messages(&Jid::new("a@s.whatsapp.net"), 10).unwrap();
+    assert_eq!(in_a.len(), 1);
+    assert_eq!(in_a[0].chat_id.as_str(), "a@s.whatsapp.net");
+    assert_eq!(in_a[0].status, MessageStatus::Delivered);
+    let in_b = store.list_messages(&Jid::new("b@s.whatsapp.net"), 10).unwrap();
+    assert!(in_b.is_empty(), "chat id must stay authoritative");
+}
+
+#[test]
+fn linking_jids_moves_call_log_rows() {
+    use whatsapp_core::calls::{CallLogRecord, CallLogStore, CallOutcome};
+
+    let store = Store::open_in_memory().expect("open store");
+    let pn = "31619446549@s.whatsapp.net";
+    let lid = "254970750308491@lid";
+
+    store.upsert_chat(&sample_chat(pn, "Meike", 100)).unwrap();
+    let mut lid_chat = sample_chat(lid, "254970750308491", 200);
+    lid_chat.unread_count = 1;
+    store.upsert_chat(&lid_chat).unwrap();
+
+    store
+        .upsert_call_log(&CallLogRecord {
+            id: "call-1".to_owned(),
+            chat_id: Some(Jid::new(lid)),
+            from_me: false,
+            video: false,
+            outcome: CallOutcome::Missed,
+            started_at: 50,
+            duration_secs: None,
+            raw: None,
+        })
+        .unwrap();
+
+    let canonical = store
+        .link_jids(&Jid::new(pn), &Jid::new(lid))
+        .unwrap()
+        .expect("merged");
+    assert_eq!(canonical.as_str(), pn);
+
+    let rows = store.list_call_log(10).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].chat_id.as_ref().map(Jid::as_str),
+        Some(pn),
+        "call log must follow the canonical chat id"
+    );
+}
