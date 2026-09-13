@@ -143,6 +143,20 @@ async fn mark_chat_read(
         .map_err(|error| error.to_string())
 }
 
+/// Send a typing/paused chat-state update.
+#[tauri::command]
+async fn set_typing(
+    state: tauri::State<'_, state::AppState>,
+    chat_id: String,
+    typing: bool,
+) -> Result<(), String> {
+    state
+        .core()
+        .set_typing(&Jid::new(chat_id), typing)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Application entry point.
 pub fn run() {
     let _ = tracing_subscriber::fmt()
@@ -175,6 +189,7 @@ pub fn run() {
             set_chat_muted,
             set_chat_archived,
             mark_chat_read,
+            set_typing,
             platform::notify,
             platform::notification_permission,
             platform::set_badge,

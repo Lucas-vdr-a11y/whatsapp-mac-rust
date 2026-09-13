@@ -32,16 +32,43 @@ export function Conversation({ chat }: ConversationProps) {
   );
   const sendText = useAppStore((state) => state.sendText);
   const loadMessages = useAppStore((state) => state.loadMessages);
+  const sendTyping = useAppStore((state) => state.sendTyping);
+  const markRead = useAppStore((state) => state.markRead);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastTypingSentAt = useRef(0);
+  const typingActive = useRef(false);
 
   useEffect(() => {
     loadMessages(chat.id);
   }, [chat.id, loadMessages]);
 
+  // Opening a visible conversation marks it as read.
+  useEffect(() => {
+    if (chat.unreadCount > 0 && document.visibilityState === "visible") {
+      markRead(chat.id);
+    }
+  }, [chat.id, chat.unreadCount, markRead]);
+
   useEffect(() => {
     const element = scrollRef.current;
     if (element) element.scrollTop = element.scrollHeight;
   }, [messages.length, chat.id]);
+
+  // Throttled outgoing typing state: signal at most every 7 s while typing and
+  // signal "paused" as soon as the composer empties or the message goes out.
+  const handleTyping = (hasText: boolean) => {
+    const now = Date.now();
+    if (hasText) {
+      if (!typingActive.current || now - lastTypingSentAt.current > 7000) {
+        typingActive.current = true;
+        lastTypingSentAt.current = now;
+        sendTyping(chat.id, true);
+      }
+    } else if (typingActive.current) {
+      typingActive.current = false;
+      sendTyping(chat.id, false);
+    }
+  };
 
   return (
     <section className="conversation">
@@ -49,7 +76,10 @@ export function Conversation({ chat }: ConversationProps) {
       <div className="messages" ref={scrollRef}>
         {renderMessages(messages)}
       </div>
-      <Composer onSend={(text) => sendText(chat.id, text)} />
+      <Composer
+        onSend={(text) => sendText(chat.id, text)}
+        onTyping={handleTyping}
+      />
     </section>
   );
 }
@@ -76,13 +106,17 @@ export function EmptyConversation() {
 }
 
 function ConversationHeader({ chat }: { chat: ChatSummary }) {
+  const typing = useAppStore(
+    (state) => state.typingByChat[chat.id] ?? false,
+  );
+
   return (
     <header className="conversation-header" data-tauri-drag-region>
       <div className="avatar small">{initials(chat.name)}</div>
       <div className="conversation-title">
         <span className="conversation-name">{chat.name}</span>
         <span className="conversation-subtitle">
-          {chat.isGroup ? "Group" : "online"}
+          {typing ? "typing…" : chat.isGroup ? "Group" : "online"}
         </span>
       </div>
       <div className="header-actions no-drag">
@@ -170,7 +204,13 @@ function StatusTick({ status }: { status: MessageStatus }) {
   }
 }
 
-function Composer({ onSend }: { onSend: (text: string) => void }) {
+function Composer({
+  onSend,
+  onTyping,
+}: {
+  onSend: (text: string) => void;
+  onTyping: (hasText: boolean) => void;
+}) {
   const [text, setText] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
@@ -202,6 +242,7 @@ function Composer({ onSend }: { onSend: (text: string) => void }) {
     if (!value) return;
     onSend(value);
     setText("");
+    onTyping(false);
     setEmojiOpen(false);
     setAttachOpen(false);
     requestAnimationFrame(resize);
@@ -212,6 +253,7 @@ function Composer({ onSend }: { onSend: (text: string) => void }) {
     const start = element?.selectionStart ?? text.length;
     const end = element?.selectionEnd ?? text.length;
     setText(`${text.slice(0, start)}${emoji}${text.slice(end)}`);
+    onTyping(true);
     requestAnimationFrame(() => {
       const cursor = start + emoji.length;
       element?.focus();
@@ -277,7 +319,9 @@ function Composer({ onSend }: { onSend: (text: string) => void }) {
         placeholder="Type a message"
         value={text}
         onChange={(event) => {
-          setText(event.target.value);
+          const value = event.target.value;
+          setText(value);
+          onTyping(value.trim().length > 0);
           resize();
         }}
         onKeyDown={(event) => {

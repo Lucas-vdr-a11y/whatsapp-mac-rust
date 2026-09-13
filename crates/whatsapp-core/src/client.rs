@@ -363,6 +363,19 @@ impl WaClient {
         self.store.mark_chat_read(chat_id)
     }
 
+    /// Send a typing/paused chat-state update for a chat.
+    pub async fn set_typing(&self, chat_id: &Jid, typing: bool) -> Result<()> {
+        let client = self.client().await?;
+        let jid = to_upstream_jid(chat_id)?;
+        let chatstate = client.chatstate();
+        let result = if typing {
+            chatstate.send_composing(&jid).await
+        } else {
+            chatstate.send_paused(&jid).await
+        };
+        result.map_err(|error| CoreError::Protocol(error.to_string()))
+    }
+
     async fn client(&self) -> Result<Arc<Client>> {
         let guard = self.handle.lock().await;
         guard

@@ -58,6 +58,12 @@ interface AppState {
   setMessages: (chatId: Jid, messages: Message[]) => void;
   /** Fetch a chat's history from the core, once. */
   loadMessages: (chatId: Jid) => void;
+  /** Typing indicators by chat, as reported by the protocol. */
+  typingByChat: Record<Jid, boolean>;
+  /** Update the received typing state for a chat. */
+  setChatTyping: (chatId: Jid, isTyping: boolean) => void;
+  /** Tell the protocol that we started or stopped typing. */
+  sendTyping: (chatId: Jid, typing: boolean) => void;
 }
 
 /** In a plain browser we run on mock data; inside Tauri the core fills state. */
@@ -245,6 +251,20 @@ export const useAppStore = create<AppState>((set, get) => {
       void invokeCore<Message[]>("list_messages", { chatId, limit: 200 })
         .then((messages) => get().setMessages(chatId, messages))
         .catch((error) => console.error("list_messages failed", error));
+    },
+
+    typingByChat: {},
+
+    setChatTyping: (chatId, isTyping) =>
+      set((state) => ({
+        typingByChat: { ...state.typingByChat, [chatId]: isTyping },
+      })),
+
+    sendTyping: (chatId, typing) => {
+      if (!isTauri()) return;
+      void invokeCore("set_typing", { chatId, typing }).catch((error) =>
+        console.error("set_typing failed", error),
+      );
     },
   };
 });

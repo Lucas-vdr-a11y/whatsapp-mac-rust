@@ -62,6 +62,12 @@ export function useCoreBridge(): void {
           break;
         }
 
+        case "typing":
+          useAppStore
+            .getState()
+            .setChatTyping(event.payload.chatId, event.payload.isTyping);
+          break;
+
         case "message": {
           const message = event.payload;
           appendMessage(message);
