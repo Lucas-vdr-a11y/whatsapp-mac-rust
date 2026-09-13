@@ -4,6 +4,9 @@
 //! events between the webview and `whatsapp-core`. All business logic lives in
 //! the core crate.
 
+mod events;
+mod state;
+
 use serde::Serialize;
 use tauri::Manager;
 
@@ -60,6 +63,7 @@ pub fn run() {
         .try_init();
 
     tauri::Builder::default()
+        .manage(state::AppState::new())
         .invoke_handler(tauri::generate_handler![
             app_info,
             core_connect,
@@ -67,6 +71,11 @@ pub fn run() {
             send_text
         ])
         .setup(|app| {
+            // Bridge core events to the webview; the bus is quiet until the
+            // protocol client is wired up in milestone M0.
+            let app_state = app.state::<state::AppState>();
+            events::spawn_event_forwarder(app.handle().clone(), app_state.subscribe());
+
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
             }
