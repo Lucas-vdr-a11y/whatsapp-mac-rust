@@ -1,14 +1,19 @@
 //! Tauri host for RustWA.
 //!
-//! This crate is intentionally thin: it owns the window and marshals commands /
-//! events between the webview and `whatsapp-core`. All business logic lives in
-//! the core crate.
+//! This crate is intentionally thin: it owns the window, menus and native
+//! integrations and marshals commands / events between the webview and
+//! `whatsapp-core`. All business logic lives in the core crate.
 
 mod events;
+mod menu;
+mod platform;
 mod state;
+
+use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::Manager;
+use whatsapp_core::{ChatSummary, ClientConfig, Jid, Message, Store, WaClient};
 
 /// Static information about the running build, used by the UI's about screen.
 #[derive(Debug, Serialize)]
@@ -29,28 +34,58 @@ fn app_info() -> AppInfo {
     }
 }
 
-/// Starts the connection/pairing flow.
-///
-/// TODO(M1): delegate to `whatsapp_core::Client`.
+/// Starts the connection/pairing flow. Idempotent: calling it while already
+/// connected (or connecting) succeeds without restarting the session.
 #[tauri::command]
-async fn core_connect() -> Result<(), String> {
-    Err("protocol core is not wired up yet (milestone M1)".to_owned())
+async fn core_connect(state: tauri::State<'_, state::AppState>) -> Result<(), String> {
+    state
+        .core()
+        .connect()
+        .await
+        .map_err(|error| error.to_string())
 }
 
-/// Logs out and clears the local session.
-///
-/// TODO(M1): delegate to `whatsapp_core::Client`.
+/// Unlinks this device and clears the local session.
 #[tauri::command]
-async fn core_logout() -> Result<(), String> {
-    Err("protocol core is not wired up yet (milestone M1)".to_owned())
+async fn core_logout(state: tauri::State<'_, state::AppState>) -> Result<(), String> {
+    state
+        .core()
+        .logout()
+        .await
+        .map_err(|error| error.to_string())
 }
 
-/// Sends a text message to a chat.
-///
-/// TODO(M1): delegate to `whatsapp_core::Client`.
+/// Sends a text message to a chat. Returns the stored local echo.
 #[tauri::command]
-async fn send_text(_chat_id: String, _text: String) -> Result<(), String> {
-    Err("protocol core is not wired up yet (milestone M1)".to_owned())
+async fn send_text(
+    state: tauri::State<'_, state::AppState>,
+    chat_id: String,
+    text: String,
+) -> Result<Message, String> {
+    state
+        .core()
+        .send_text(&Jid::new(chat_id), &text)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Chats known to the local store, newest activity first.
+#[tauri::command]
+async fn list_chats(state: tauri::State<'_, state::AppState>) -> Result<Vec<ChatSummary>, String> {
+    state.core().list_chats().map_err(|error| error.to_string())
+}
+
+/// Messages of one chat, oldest first.
+#[tauri::command]
+async fn list_messages(
+    state: tauri::State<'_, state::AppState>,
+    chat_id: String,
+    limit: Option<u32>,
+) -> Result<Vec<Message>, String> {
+    state
+        .core()
+        .list_messages(&Jid::new(chat_id), limit.unwrap_or(200))
+        .map_err(|error| error.to_string())
 }
 
 /// Application entry point.
@@ -62,25 +97,68 @@ pub fn run() {
         )
         .try_init();
 
-    tauri::Builder::default()
-        .manage(state::AppState::new())
+    let app = tauri::Builder::default()
+        // Single-instance must run first: it probes for a running instance
+        // before the rest of the plugins boot up.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             app_info,
             core_connect,
             core_logout,
-            send_text
+            send_text,
+            list_chats,
+            list_messages,
+            platform::notify,
+            platform::notification_permission,
+            platform::set_badge,
+            platform::platform_capabilities
         ])
         .setup(|app| {
-            // Bridge core events to the webview; the bus is quiet until the
-            // protocol client is wired up in milestone M0.
-            let app_state = app.state::<state::AppState>();
-            events::spawn_event_forwarder(app.handle().clone(), app_state.subscribe());
+            // Persistent state lives under the app data directory:
+            //   rustwa.db      – chats, messages, contacts (our schema)
+            //   session/       – protocol session keys (upstream adapter)
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| format!("failed to resolve the app data directory: {error}"))?;
+            let store = Arc::new(
+                Store::open(&data_dir.join("rustwa.db"))
+                    .map_err(|error| format!("failed to open the store: {error}"))?,
+            );
+            let core = Arc::new(WaClient::new(
+                ClientConfig::new(data_dir.join("session")),
+                store,
+            ));
+            app.manage(state::AppState::new(Arc::clone(&core)));
+
+            // Bridge core events to the webview.
+            events::spawn_event_forwarder(app.handle().clone(), core.subscribe());
+
+            // Native menu bar. `Preferences…` emits `ui://open-settings`.
+            app.set_menu(menu::build(app.handle())?)?;
+            app.on_menu_event(menu::on_event);
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running RustWA");
+        .build(tauri::generate_context!())
+        .expect("error while building RustWA");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            // Flush protocol state before the process goes away.
+            let core = Arc::clone(app_handle.state::<state::AppState>().core());
+            tauri::async_runtime::block_on(core.shutdown());
+        }
+    });
 }

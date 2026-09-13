@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { useShallow } from "zustand/react/shallow";
 import { ChatList } from "./components/ChatList";
 import { Conversation, EmptyConversation } from "./components/Conversation";
@@ -10,12 +11,30 @@ import { ComingSoonScreen } from "./components/screens/ComingSoonScreen";
 import { CommunitiesScreen } from "./components/screens/CommunitiesScreen";
 import { StatusScreen } from "./components/screens/StatusScreen";
 import { useCoreBridge } from "./lib/bridge";
+import { isTauri } from "./lib/ipc";
 import { selectVisibleChats, useAppStore } from "./store/app";
 
 export default function App() {
   useCoreBridge();
 
   const [section, setSection] = useState<RailSection>("chats");
+
+  // The native menu's Preferences… item (Cmd+,) opens the settings section.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    void listen("ui://open-settings", () => setSection("settings")).then(
+      (fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      },
+    );
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   const paired = useAppStore((state) => state.paired);
   const chats = useAppStore(useShallow(selectVisibleChats));

@@ -49,7 +49,8 @@ interface AppState {
   setConnection: (connection: ConnectionState) => void;
   setQrCode: (code: string | null) => void;
   setPairCode: (code: string | null) => void;
-  markPaired: (jid: Jid) => void;
+  /** Mark the session usable; `jid` is present on a fresh pairing. */
+  markPaired: (jid?: Jid) => void;
 
   /** Replace the chat list with the core's view. */
   setChats: (chats: ChatSummary[]) => void;

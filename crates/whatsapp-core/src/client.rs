@@ -109,7 +109,9 @@ impl WaClient {
     pub async fn connect(&self) -> Result<()> {
         let mut guard = self.handle.lock().await;
         if guard.is_some() {
-            return Err(CoreError::AlreadyConnected);
+            // Already connecting or connected. Treat as success so callers can
+            // retry idempotently (the UI's retry button, StrictMode re-runs).
+            return Ok(());
         }
 
         std::fs::create_dir_all(&self.config.data_dir)
@@ -139,6 +141,7 @@ impl WaClient {
             .on_qr_code(move |code, _timeout| {
                 let bus = bus_qr.clone();
                 async move {
+                    tracing::info!("pairing QR code received ({} bytes)", code.len());
                     let _ = bus.send(CoreEvent::Pairing(PairingEvent::QrCode { code }));
                 }
             })
@@ -156,6 +159,7 @@ impl WaClient {
                     let connection = Arc::clone(&connection);
                     async move {
                         connection.store(2, Ordering::Relaxed);
+                        tracing::info!("connected to WhatsApp");
                         let _ = bus.send(CoreEvent::Connection(ConnectionEvent {
                             state: ConnectionState::Connected,
                             reason: None,
@@ -345,6 +349,7 @@ fn handle_lifecycle_event(
             if let Ok(mut guard) = own_jid.lock() {
                 *guard = Some(from_upstream_jid(&success.id));
             }
+            tracing::info!(jid = %success.id, "device paired");
             let _ = bus.send(CoreEvent::Pairing(PairingEvent::PairSuccess {
                 jid: from_upstream_jid(&success.id),
             }));

@@ -35,7 +35,11 @@ export function useCoreBridge(): void {
       switch (event.type) {
         case "connection":
           setConnection(event.payload.state);
-          if (event.payload.state === "connected") void hydrateChats();
+          if (event.payload.state === "connected") {
+            // Reconnects (existing session) also imply a usable client.
+            markPaired();
+            void hydrateChats();
+          }
           break;
 
         case "pairing": {
