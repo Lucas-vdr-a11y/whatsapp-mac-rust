@@ -215,6 +215,51 @@ impl Store {
         Ok(())
     }
 
+    /// Record chat activity after a message row was written.
+    ///
+    /// Creates the chat row when it does not exist yet (name from `name_hint`
+    /// or the JID user part), updates the preview and activity timestamp, and
+    /// optionally increments the unread counter.
+    pub fn record_message_activity(
+        &self,
+        chat_id: &Jid,
+        preview: &str,
+        timestamp: u64,
+        name_hint: Option<&str>,
+        increment_unread: bool,
+    ) -> Result<()> {
+        let connection = self.lock()?;
+        let fallback_name = chat_id.user().to_owned();
+        let name_hint = name_hint.unwrap_or("");
+        connection
+            .execute(
+                "INSERT INTO chats (
+                     id, name, last_message_preview, last_activity_ts,
+                     unread_count, muted, pinned, is_group, is_archived
+                 ) VALUES (?1, CASE WHEN ?2 = '' THEN ?3 ELSE ?2 END, ?4, ?5, ?6, 0, 0, ?7, 0)
+                 ON CONFLICT(id) DO UPDATE SET
+                     name = CASE WHEN chats.name = '' THEN excluded.name ELSE chats.name END,
+                     last_message_preview = excluded.last_message_preview,
+                     last_activity_ts = excluded.last_activity_ts,
+                     unread_count = CASE
+                         WHEN ?8 THEN chats.unread_count + 1
+                         ELSE chats.unread_count
+                     END",
+                params![
+                    chat_id.as_str(),
+                    name_hint,
+                    fallback_name,
+                    preview,
+                    as_i64(timestamp),
+                    i64::from(increment_unread),
+                    i64::from(chat_id.is_group()),
+                    i64::from(increment_unread),
+                ],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
     /// Number of stored messages, for diagnostics.
     pub fn message_count(&self) -> Result<u64> {
         let connection = self.lock()?;

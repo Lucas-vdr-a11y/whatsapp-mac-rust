@@ -12,7 +12,22 @@ description = "Protocol-agnostic domain core for RustWA: connection lifecycle, e
 workspace = true
 
 [dependencies]
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 serde.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 tracing.workspace = true
+
+# NOTE: upstream's default feature set includes `simd`, which enables
+# `portable_simd` and therefore requires a nightly toolchain. We build on
+# stable, so the defaults are disabled and the stable feature set is selected
+# explicitly. Keep this list in sync with the features we actually use.
+whatsapp-rust = { version = "0.7.0", default-features = false, features = [
+    "sqlite-storage",
+    "tokio-transport",
+    "tokio-runtime",
+    "ureq-client",
+    "tokio-native",
+    "signal",
+] }
+
