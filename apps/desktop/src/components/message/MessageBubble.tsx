@@ -3,20 +3,34 @@
  * folder; the date dividers, tails and lazy loading stay in Conversation. */
 
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Copy, Pencil, Reply, SmilePlus, Star, Trash } from "lucide-react";
+import {
+  Copy,
+  Forward,
+  Pencil,
+  Pin,
+  PinOff,
+  Reply,
+  SmilePlus,
+  Star,
+  Trash,
+} from "lucide-react";
+import { invokeCore, isTauri } from "../../lib/ipc";
 import { formatBubbleTime } from "../../lib/time";
 import type { ChatSummary, Message, MessageStatus } from "../../lib/types";
 import { useAppStore } from "../../store/app";
 import { ContextMenu, type ContextMenuEntry } from "../ContextMenu";
 import { Check, CheckCheck, Clock } from "../icons";
 import { FileContent } from "./FileContent";
+import { ForwardModal } from "./ForwardModal";
 import { ImageContent } from "./ImageContent";
 import { MessagePopover } from "./MessagePopover";
+import { PollContent } from "./PollContent";
 import { QuotePreview } from "./QuotePreview";
 import { ReactionBar } from "./ReactionBar";
 import { VideoContent } from "./VideoContent";
 import { VoiceNoteContent } from "./VoiceNoteContent";
 import { messagePreview } from "./media";
+import { setMessagePinned, useMessagePinned } from "./messageLocalState";
 
 interface MessageBubbleProps {
   message: Message;
@@ -45,10 +59,12 @@ export function MessageBubble({
   const toggleStar = useAppStore((state) => state.toggleStar);
   const toggleReaction = useAppStore((state) => state.toggleReaction);
   const revokeMessage = useAppStore((state) => state.revokeMessage);
+  const pinned = useMessagePinned(message.id);
 
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [forwardOpen, setForwardOpen] = useState(false);
   const [popover, setPopover] = useState<{
-    kind: "react" | "delete";
+    kind: "react" | "delete" | "pin";
     x: number;
     y: number;
   } | null>(null);
@@ -90,6 +106,35 @@ export function MessageBubble({
     }
   };
 
+  // Pin state is UI-only: the core exposes no "which messages are pinned"
+  // snapshot, so this is optimistic and reverts if the IPC call fails.
+  const pinMessage = (days: number) => {
+    setMessagePinned(message.id, true);
+    if (!isTauri()) return;
+    void invokeCore("message_pin", {
+      chatId: message.chatId,
+      messageId: message.id,
+      days,
+      fromMe: message.fromMe,
+    }).catch((error: unknown) => {
+      console.error("message_pin failed", error);
+      setMessagePinned(message.id, false);
+    });
+  };
+
+  const unpinMessage = () => {
+    setMessagePinned(message.id, false);
+    if (!isTauri()) return;
+    void invokeCore("message_unpin", {
+      chatId: message.chatId,
+      messageId: message.id,
+      fromMe: message.fromMe,
+    }).catch((error: unknown) => {
+      console.error("message_unpin failed", error);
+      setMessagePinned(message.id, true);
+    });
+  };
+
   const menuItems: ContextMenuEntry[] = [];
   if (!deleted) {
     menuItems.push({
@@ -111,6 +156,12 @@ export function MessageBubble({
       onSelect: () =>
         setPopover({ kind: "react", x: menu?.x ?? 0, y: menu?.y ?? 0 }),
     });
+    menuItems.push({
+      id: "forward",
+      label: "Forward",
+      icon: Forward,
+      onSelect: () => setForwardOpen(true),
+    });
     if (message.text) {
       menuItems.push({
         id: "copy",
@@ -126,6 +177,24 @@ export function MessageBubble({
     icon: Star,
     onSelect: () => toggleStar(message.chatId, message.id, message.fromMe),
   });
+  if (!deleted) {
+    menuItems.push(
+      pinned
+        ? {
+            id: "unpin",
+            label: "Unpin message",
+            icon: PinOff,
+            onSelect: unpinMessage,
+          }
+        : {
+            id: "pin",
+            label: "Pin message",
+            icon: Pin,
+            onSelect: () =>
+              setPopover({ kind: "pin", x: menu?.x ?? 0, y: menu?.y ?? 0 }),
+          },
+    );
+  }
   if (!deleted && message.fromMe && message.kind === "text") {
     menuItems.push({
       id: "edit",
@@ -163,6 +232,9 @@ export function MessageBubble({
             <MessageContent message={message} />
           )}
           <span className="bubble-meta">
+            {pinned ? (
+              <Pin size={12} className="pin-glyph" aria-label="Pinned message" />
+            ) : null}
             {formatBubbleTime(message.timestamp)}
             {message.fromMe && <StatusTick status={message.status} />}
           </span>
@@ -192,6 +264,14 @@ export function MessageBubble({
           onDelete={(forEveryone) =>
             revokeMessage(message.chatId, message.id, forEveryone)
           }
+          onPin={pinMessage}
+        />
+      ) : null}
+
+      {forwardOpen ? (
+        <ForwardModal
+          message={message}
+          onClose={() => setForwardOpen(false)}
         />
       ) : null}
     </div>
@@ -212,6 +292,8 @@ function MessageContent({ message }: { message: Message }) {
     case "audio":
     case "document":
       return <FileContent message={message} />;
+    case "poll":
+      return <PollContent message={message} />;
     default:
       // text and every kind without a dedicated bubble keep the plain text
       // fallback that Conversation used before.

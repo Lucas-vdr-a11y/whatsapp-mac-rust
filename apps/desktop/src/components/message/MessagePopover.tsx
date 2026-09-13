@@ -1,21 +1,28 @@
 /** Floating submenu for the message context menu.
  *
  * The shared `ContextMenu` supports neither custom rows nor submenus, so the
- * quick-reaction row and the delete choices render in a tiny popover that
- * reuses the `.context-menu` visuals. Opens at the originating menu's
- * coordinates, closes on Escape/outside pointer-down, and clamps to the
- * viewport exactly like `ContextMenu`. */
+ * quick-reaction row, the pin durations and the delete choices render in a
+ * tiny popover that reuses the `.context-menu` visuals. Opens at the
+ * originating menu's coordinates, closes on Escape/outside pointer-down, and
+ * clamps to the viewport exactly like `ContextMenu`. */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Trash } from "lucide-react";
+import { Clock, Trash } from "lucide-react";
 
 /** WhatsApp's quick-reaction set. */
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
+/** The pin durations the core accepts (`message_pin { days }`). */
+const PIN_DURATIONS: { days: number; label: string }[] = [
+  { days: 1, label: "24 hours" },
+  { days: 7, label: "7 days" },
+  { days: 30, label: "30 days" },
+];
+
 const VIEWPORT_MARGIN = 8;
 
 interface MessagePopoverProps {
-  kind: "react" | "delete";
+  kind: "react" | "delete" | "pin";
   x: number;
   y: number;
   /** Own messages may be revoked for everyone; others only for me. */
@@ -23,6 +30,8 @@ interface MessagePopoverProps {
   onClose: () => void;
   onPickEmoji: (emoji: string) => void;
   onDelete: (forEveryone: boolean) => void;
+  /** Called with the number of days when `kind` is "pin". */
+  onPin?: (days: number) => void;
 }
 
 export function MessagePopover({
@@ -33,6 +42,7 @@ export function MessagePopover({
   onClose,
   onPickEmoji,
   onDelete,
+  onPin,
 }: MessagePopoverProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ x, y });
@@ -107,6 +117,27 @@ export function MessagePopover({
               }}
             >
               {emoji}
+            </button>
+          ))}
+        </div>
+      ) : kind === "pin" ? (
+        <div className="pin-popover" role="group" aria-label="Pin duration">
+          <span className="pin-popover-title">Pin for</span>
+          {PIN_DURATIONS.map(({ days, label }) => (
+            <button
+              key={days}
+              type="button"
+              role="menuitem"
+              className="context-menu-item"
+              onClick={() => {
+                onPin?.(days);
+                onClose();
+              }}
+            >
+              <span className="context-menu-icon">
+                <Clock size={18} />
+              </span>
+              <span className="context-menu-label">{label}</span>
             </button>
           ))}
         </div>

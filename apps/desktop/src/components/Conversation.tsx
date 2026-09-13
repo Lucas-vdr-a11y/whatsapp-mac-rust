@@ -1,11 +1,23 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { avatarSrc } from "../lib/avatar";
 import { initials } from "../lib/names";
 import { formatDateDivider } from "../lib/time";
-import type { ChatSummary, Message } from "../lib/types";
+import type { ChatSummary, Jid, Message } from "../lib/types";
 import { useAppStore, type MessageQuote } from "../store/app";
 import { AttachmentMenu, type AttachmentKind } from "./AttachmentMenu";
 import { CallOverlay } from "./calls/CallOverlay";
+import { DRAFT_SAVE_DELAY_MS, readDraft, writeDraft } from "./composer/drafts";
+import { MentionMenu } from "./composer/MentionMenu";
+import {
+  deriveGroupParticipants,
+  findMentionTrigger,
+  matchParticipants,
+  mentionJids,
+  pruneMentions,
+  type MentionParticipant,
+  type MentionRef,
+  type MentionTrigger,
+} from "./composer/mentions";
 import { EmojiPicker } from "./EmojiPicker";
 import { MessageBubble } from "./message/MessageBubble";
 import {
@@ -23,6 +35,7 @@ import {
 } from "./icons";
 
 const EMPTY_MESSAGES: Message[] = [];
+const EMPTY_PARTICIPANTS: MentionParticipant[] = [];
 
 interface ConversationProps {
   chat: ChatSummary;
@@ -32,6 +45,7 @@ export function Conversation({ chat }: ConversationProps) {
   const messages = useAppStore(
     (state) => state.messages[chat.id] ?? EMPTY_MESSAGES,
   );
+  const contactNames = useAppStore((state) => state.contactNames);
   const sendText = useAppStore((state) => state.sendText);
   const loadMessages = useAppStore((state) => state.loadMessages);
   const sendTyping = useAppStore((state) => state.sendTyping);
@@ -42,6 +56,16 @@ export function Conversation({ chat }: ConversationProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastTypingSentAt = useRef(0);
   const typingActive = useRef(false);
+
+  // Mention targets for group chats: senders seen in the loaded history,
+  // labelled with the names the core's chat list provides.
+  const participants = useMemo(
+    () =>
+      chat.isGroup
+        ? deriveGroupParticipants(messages, contactNames)
+        : EMPTY_PARTICIPANTS,
+    [chat.isGroup, messages, contactNames],
+  );
 
   // Inline edit target for the composer (own text messages only).
   const [editing, setEditing] = useState<{
@@ -104,7 +128,9 @@ export function Conversation({ chat }: ConversationProps) {
         {renderMessages(messages, chat, startEditing)}
       </div>
       <Composer
-        onSend={(text) => sendText(chat.id, text)}
+        chatId={chat.id}
+        participants={participants}
+        onSend={(text, mentions) => sendText(chat.id, text, mentions)}
         onTyping={handleTyping}
         replyTo={activeReply}
         onCancelReply={() => setReplyTo(null)}
@@ -148,7 +174,7 @@ function ConversationHeader({ chat }: { chat: ChatSummary }) {
   return (
     <header className="conversation-header" data-tauri-drag-region>
       <ConversationAvatar chat={chat} />
-      <div className="conversation-title">
+      <div className="conversation-title" data-tauri-drag-region>
         <span className="conversation-name">{chat.name}</span>
         <span className="conversation-subtitle">
           {typing ? "typing…" : chat.isGroup ? "Group" : "online"}
@@ -237,7 +263,10 @@ function renderMessages(
 }
 
 interface ComposerProps {
-  onSend: (text: string) => void;
+  chatId: Jid;
+  /** Group participants the mention menu offers; empty for direct chats. */
+  participants: MentionParticipant[];
+  onSend: (text: string, mentions: Jid[]) => void;
   onTyping: (hasText: boolean) => void;
   replyTo: MessageQuote | null;
   onCancelReply: () => void;
@@ -247,6 +276,8 @@ interface ComposerProps {
 }
 
 function Composer({
+  chatId,
+  participants,
   onSend,
   onTyping,
   replyTo,
@@ -256,10 +287,19 @@ function Composer({
   onSaveEdit,
 }: ComposerProps) {
   const [text, setText] = useState("");
+  // Mentions inserted via the autocomplete, tracked as spans in `text`.
+  const [mentions, setMentions] = useState<MentionRef[]>([]);
+  // The in-progress `@query` before the caret, if the menu is open.
+  const [mentionTrigger, setMentionTrigger] = useState<MentionTrigger | null>(
+    null,
+  );
+  const [mentionIndex, setMentionIndex] = useState(0);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLElement>(null);
+  const draftTimer = useRef<number | null>(null);
+  const pendingDraft = useRef<{ chatId: Jid; text: string } | null>(null);
 
   const resize = () => {
     const element = textareaRef.current;
@@ -268,24 +308,66 @@ function Composer({
     element.style.height = `${Math.min(element.scrollHeight, 120)}px`;
   };
 
-  // Clicking outside the composer dismisses whichever panel is open.
+  /** Write any debounced draft immediately (chat switch / unmount). */
+  const flushDraft = () => {
+    if (draftTimer.current !== null) {
+      window.clearTimeout(draftTimer.current);
+      draftTimer.current = null;
+    }
+    const pending = pendingDraft.current;
+    pendingDraft.current = null;
+    if (pending) writeDraft(pending.chatId, pending.text);
+  };
+
+  const scheduleDraft = (value: string) => {
+    if (editing) return;
+    pendingDraft.current = { chatId, text: value };
+    if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
+    draftTimer.current = window.setTimeout(() => {
+      draftTimer.current = null;
+      const pending = pendingDraft.current;
+      pendingDraft.current = null;
+      if (pending) writeDraft(pending.chatId, pending.text);
+    }, DRAFT_SAVE_DELAY_MS);
+  };
+
+  // Switching chats persists the previous chat's draft and restores this one
+  // (also on first mount, so a reload brings the draft back).
   useEffect(() => {
-    if (!emojiOpen && !attachOpen) return;
+    flushDraft();
+    setText(readDraft(chatId));
+    setMentions([]);
+    setMentionTrigger(null);
+    setMentionIndex(0);
+    requestAnimationFrame(resize);
+  }, [chatId]);
+
+  // Best-effort flush when the conversation unmounts mid-debounce.
+  useEffect(() => () => flushDraft(), []);
+
+  // Clicking outside the composer dismisses whichever panel is open.
+  const mentionOpen =
+    !editing && mentionTrigger !== null && participants.length > 0;
+  useEffect(() => {
+    if (!emojiOpen && !attachOpen && !mentionOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
       if (!composerRef.current?.contains(event.target as Node)) {
         setEmojiOpen(false);
         setAttachOpen(false);
+        setMentionTrigger(null);
       }
     };
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [emojiOpen, attachOpen]);
+  }, [emojiOpen, attachOpen, mentionOpen]);
 
   // Entering edit mode loads the message into the composer.
   useEffect(() => {
     if (!editing) return;
     setEmojiOpen(false);
     setAttachOpen(false);
+    setMentions([]);
+    setMentionTrigger(null);
     setText(editing.text);
     requestAnimationFrame(() => {
       const element = textareaRef.current;
@@ -309,16 +391,29 @@ function Composer({
   const submit = () => {
     const value = text.trim();
     if (!value) return;
-    if (editing) onSaveEdit(value);
-    else onSend(value);
+    if (editing) {
+      onSaveEdit(value);
+    } else {
+      // Validate spans against the raw text, then send the trimmed message.
+      onSend(value, mentionJids(text, mentions));
+    }
+    flushDraft();
+    writeDraft(chatId, "");
     setText("");
+    setMentions([]);
+    setMentionTrigger(null);
+    setMentionIndex(0);
     onTyping(false);
     resetPanels();
   };
 
   const cancelEdit = () => {
     onCancelEdit();
-    setText("");
+    // Flush any draft typed before the edit started, then bring it back.
+    flushDraft();
+    setMentions([]);
+    setMentionTrigger(null);
+    setText(readDraft(chatId));
     onTyping(false);
     resetPanels();
   };
@@ -332,7 +427,11 @@ function Composer({
     const element = textareaRef.current;
     const start = element?.selectionStart ?? text.length;
     const end = element?.selectionEnd ?? text.length;
-    setText(`${text.slice(0, start)}${emoji}${text.slice(end)}`);
+    const next = `${text.slice(0, start)}${emoji}${text.slice(end)}`;
+    setText(next);
+    setMentions((current) => pruneMentions(next, current));
+    setMentionTrigger(null);
+    scheduleDraft(next);
     onTyping(true);
     requestAnimationFrame(() => {
       const cursor = start + emoji.length;
@@ -345,11 +444,13 @@ function Composer({
   const toggleEmoji = () => {
     setEmojiOpen((open) => !open);
     setAttachOpen(false);
+    setMentionTrigger(null);
   };
 
   const toggleAttach = () => {
     setAttachOpen((open) => !open);
     setEmojiOpen(false);
+    setMentionTrigger(null);
   };
 
   // The actual attachment flows land with a later milestone; for now the
@@ -357,6 +458,58 @@ function Composer({
   const handleAttach = (_kind: AttachmentKind) => {
     setAttachOpen(false);
   };
+
+  /** Recompute the active `@query` from the text and caret position. */
+  const updateMentionTrigger = (value: string, caret: number) => {
+    const next =
+      editing || participants.length === 0
+        ? null
+        : findMentionTrigger(value, caret);
+    setMentionTrigger((current) =>
+      current?.start === next?.start && current?.query === next?.query
+        ? current
+        : next,
+    );
+  };
+
+  /** Replace the active `@query` with `@Name ` and remember its span. */
+  const insertMention = (participant: MentionParticipant) => {
+    const element = textareaRef.current;
+    if (!mentionTrigger || !element) return;
+
+    const caret = element.selectionStart ?? text.length;
+    const selectionEnd = element.selectionEnd ?? caret;
+    const inserted = `@${participant.name} `;
+    const next =
+      text.slice(0, mentionTrigger.start) + inserted + text.slice(selectionEnd);
+    const mention: MentionRef = {
+      jid: participant.id,
+      name: participant.name,
+      start: mentionTrigger.start,
+      end: mentionTrigger.start + inserted.length,
+    };
+
+    setText(next);
+    setMentions((current) => [...pruneMentions(next, current), mention]);
+    setMentionTrigger(null);
+    setMentionIndex(0);
+    scheduleDraft(next);
+
+    const cursor = mentionTrigger.start + inserted.length;
+    requestAnimationFrame(() => {
+      element.focus();
+      element.setSelectionRange(cursor, cursor);
+      resize();
+    });
+  };
+
+  const mentionMatches = mentionTrigger
+    ? matchParticipants(participants, mentionTrigger.query)
+    : EMPTY_PARTICIPANTS;
+  const safeMentionIndex =
+    mentionMatches.length === 0
+      ? 0
+      : Math.min(mentionIndex, mentionMatches.length - 1);
 
   const hasText = text.trim().length > 0;
 
@@ -372,6 +525,14 @@ function Composer({
         <AttachmentMenu
           onPick={handleAttach}
           onClose={() => setAttachOpen(false)}
+        />
+      )}
+      {mentionOpen && (
+        <MentionMenu
+          participants={mentionMatches}
+          activeIndex={safeMentionIndex}
+          onHover={setMentionIndex}
+          onPick={insertMention}
         />
       )}
 
@@ -438,10 +599,55 @@ function Composer({
           onChange={(event) => {
             const value = event.target.value;
             setText(value);
+            setMentions((current) => pruneMentions(value, current));
             onTyping(value.trim().length > 0);
+            scheduleDraft(value);
+            setMentionIndex(0);
+            updateMentionTrigger(
+              value,
+              event.target.selectionStart ?? value.length,
+            );
             resize();
           }}
+          onSelect={(event) => {
+            updateMentionTrigger(
+              event.currentTarget.value,
+              event.currentTarget.selectionStart ?? 0,
+            );
+          }}
           onKeyDown={(event) => {
+            if (mentionOpen) {
+              if (event.key === "ArrowDown" && mentionMatches.length > 0) {
+                event.preventDefault();
+                setMentionIndex(
+                  (index) => (index + 1) % mentionMatches.length,
+                );
+                return;
+              }
+              if (event.key === "ArrowUp" && mentionMatches.length > 0) {
+                event.preventDefault();
+                setMentionIndex(
+                  (index) =>
+                    (index - 1 + mentionMatches.length) %
+                    mentionMatches.length,
+                );
+                return;
+              }
+              if (
+                (event.key === "Enter" || event.key === "Tab") &&
+                mentionMatches.length > 0
+              ) {
+                event.preventDefault();
+                const participant = mentionMatches[safeMentionIndex];
+                if (participant) insertMention(participant);
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setMentionTrigger(null);
+                return;
+              }
+            }
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               submit();

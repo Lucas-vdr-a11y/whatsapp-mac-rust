@@ -13,7 +13,7 @@ export function ScreenHeader({
 }) {
   return (
     <header className="chat-list-header" data-tauri-drag-region>
-      <h1 className="chat-list-title">{title}</h1>
+      <h1 className="chat-list-title" data-tauri-drag-region>{title}</h1>
       {children ? (
         <div className="header-actions no-drag">{children}</div>
       ) : null}

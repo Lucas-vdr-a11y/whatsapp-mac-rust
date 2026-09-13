@@ -136,7 +136,9 @@ interface AppState {
   setQuery: (query: string) => void;
   setFilter: (filter: ChatFilter) => void;
   appendMessage: (message: Message) => void;
-  sendText: (chatId: Jid, text: string) => void;
+  /** Send a text message, optionally @-mentioning participant JIDs
+   * (`chat_send_mentions`, falling back to `send_text` on older builds). */
+  sendText: (chatId: Jid, text: string, mentions?: Jid[]) => void;
 
   /** Message being replied to in the composer, if any. */
   replyTo: MessageQuote | null;
@@ -206,6 +208,9 @@ interface AppState {
 
   /** Replace the chat list with the core's view. */
   setChats: (chats: ChatSummary[]) => void;
+  /** Display names by JID, harvested from `list_chats` (direct chats only).
+   * The mention menu uses these to label group senders. */
+  contactNames: Record<Jid, string>;
   /** Replace one chat's history with the core's view. */
   setMessages: (chatId: Jid, messages: Message[]) => void;
   /** Fetch a chat's history from the core, once. */
@@ -273,6 +278,7 @@ export const useAppStore = create<AppState>((set, get) => {
   return {
     chats: mockMode ? MOCK_CHATS : [],
     messages: mockMode ? MOCK_MESSAGES : {},
+    contactNames: mockMode ? contactNamesFromChats(MOCK_CHATS) : {},
     loadedChatIds: {},
     selectedChatId: null,
     query: "",
@@ -313,12 +319,13 @@ export const useAppStore = create<AppState>((set, get) => {
         };
       }),
 
-    sendText: (chatId, text) => {
+    sendText: (chatId, text, mentions) => {
       const trimmed = text.trim();
       if (!trimmed) return;
 
       const replyTo = get().replyTo;
       const activeReply = replyTo && replyTo.chatId === chatId ? replyTo : null;
+      const mentionedJids = dedupeJids(mentions);
 
       // Optimistic local echo, reconciled with the stored message when the
       // core acknowledges the send.
@@ -348,42 +355,74 @@ export const useAppStore = create<AppState>((set, get) => {
       const args: Record<string, unknown> = { chatId, text: trimmed };
       if (activeReply) args.quotedMessageId = activeReply.messageId;
 
-      void invokeCore<Message>(
-        activeReply ? "actions_send_quoting" : "send_text",
-        args,
-      )
-        .then((stored) => {
-          set((state) => {
-            // Move the locally captured quote over to the stored message id.
-            const quotes = { ...state.quotes };
-            const localQuote = quotes[optimistic.id];
-            if (localQuote) {
-              quotes[stored.id] = localQuote;
-              delete quotes[optimistic.id];
-            }
-            return {
-              quotes,
-              messages: {
-                ...state.messages,
-                [chatId]: (state.messages[chatId] ?? []).map((message) =>
-                  message.id === optimistic.id ? stored : message,
-                ),
-              },
-            };
-          });
-        })
-        .catch((error) => {
-          console.error("send message failed", error);
-          set((state) => ({
+      /** Swap the optimistic bubble for the stored row once the core acks. */
+      const reconcile = (stored: Message) => {
+        set((state) => {
+          // Move the locally captured quote over to the stored message id.
+          const quotes = { ...state.quotes };
+          const localQuote = quotes[optimistic.id];
+          if (localQuote) {
+            quotes[stored.id] = localQuote;
+            delete quotes[optimistic.id];
+          }
+          return {
+            quotes,
             messages: {
               ...state.messages,
               [chatId]: (state.messages[chatId] ?? []).map((message) =>
-                message.id === optimistic.id
-                  ? { ...message, status: "failed" as const }
-                  : message,
+                message.id === optimistic.id ? stored : message,
               ),
             },
-          }));
+          };
+        });
+      };
+
+      const markFailed = (error: unknown) => {
+        console.error("send message failed", error);
+        set((state) => ({
+          messages: {
+            ...state.messages,
+            [chatId]: (state.messages[chatId] ?? []).map((message) =>
+              message.id === optimistic.id
+                ? { ...message, status: "failed" as const }
+                : message,
+            ),
+          },
+        }));
+      };
+
+      // The quoting command has no mention parameter, so when a reply and
+      // mentions are both active the quote wins and the mentions are dropped.
+      if (activeReply) {
+        void invokeCore<Message>("actions_send_quoting", args)
+          .then(reconcile)
+          .catch(markFailed);
+        return;
+      }
+
+      if (mentionedJids.length === 0) {
+        void invokeCore<Message>("send_text", args)
+          .then(reconcile)
+          .catch(markFailed);
+        return;
+      }
+
+      void invokeCore<Message>("chat_send_mentions", {
+        chatId,
+        text: trimmed,
+        mentions: mentionedJids,
+      })
+        .then(reconcile)
+        .catch((error) => {
+          // Older core builds lack the command; retry as a plain text send so
+          // the message still goes out (without mention metadata).
+          if (isUnknownCommand(error)) {
+            void invokeCore<Message>("send_text", args)
+              .then(reconcile)
+              .catch(markFailed);
+            return;
+          }
+          markFailed(error);
         });
     },
 
@@ -629,7 +668,13 @@ export const useAppStore = create<AppState>((set, get) => {
           isGroup,
           isArchived: false,
         };
-        return { chats: [chat, ...state.chats], selectedChatId: id };
+        return {
+          chats: [chat, ...state.chats],
+          contactNames: isGroup
+            ? state.contactNames
+            : { ...state.contactNames, [id]: name },
+          selectedChatId: id,
+        };
       }),
 
     setConnection: (connection) => set({ connection }),
@@ -655,7 +700,15 @@ export const useAppStore = create<AppState>((set, get) => {
         pairingExpired: false,
       }),
 
-    setChats: (chats) => set({ chats }),
+    setChats: (chats) =>
+      set((state) => ({
+        chats,
+        // Keep the latest `list_chats` names without dropping earlier ones.
+        contactNames: {
+          ...state.contactNames,
+          ...contactNamesFromChats(chats),
+        },
+      })),
 
     setMessages: (chatId, messages) =>
       set((state) => ({
@@ -1123,6 +1176,31 @@ function appendHistory(
   if (!entry) return history;
   if (history.some((item) => item.id === entry.id)) return history;
   return [entry, ...history];
+}
+
+/** Display names of direct chats from a `list_chats` payload. */
+function contactNamesFromChats(chats: ChatSummary[]): Record<Jid, string> {
+  const names: Record<Jid, string> = {};
+  for (const chat of chats) {
+    if (!chat.isGroup) names[chat.id] = chat.name;
+  }
+  return names;
+}
+
+/** Stable order for the mention JIDs handed to the core. */
+function dedupeJids(jids: Jid[] | undefined): Jid[] {
+  return jids ? [...new Set(jids)] : [];
+}
+
+/** True when the core rejected a call because the command does not exist yet. */
+function isUnknownCommand(error: unknown): boolean {
+  const raw =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  return /unknown command|command .* not found|unrecognized command/i.test(raw);
 }
 
 /** Chats after applying the search query and the active filter. */
