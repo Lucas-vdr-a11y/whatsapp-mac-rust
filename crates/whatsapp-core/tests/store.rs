@@ -13,6 +13,8 @@ fn sample_chat(id: &str, name: &str, ts: u64) -> ChatSummary {
         pinned: true,
         is_group: false,
         is_archived: false,
+        last_message_kind: None,
+        last_from_me: false,
     }
 }
 
@@ -26,6 +28,7 @@ fn sample_message(id: &str, chat_id: &str, timestamp: u64) -> Message {
         kind: MessageKind::Text,
         text: Some(format!("message {id}")),
         status: MessageStatus::Delivered,
+        view_once: false,
     }
 }
 

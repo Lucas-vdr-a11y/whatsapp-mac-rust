@@ -268,12 +268,12 @@ fn normalize_community_input(
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .map(str::to_owned);
-    if let Some(text) = description.as_deref() {
-        if text.chars().count() > GROUP_DESCRIPTION_MAX_LENGTH {
-            return Err(CoreError::InvalidInput(format!(
-                "community description is longer than {GROUP_DESCRIPTION_MAX_LENGTH} characters"
-            )));
-        }
+    if let Some(text) = description.as_deref()
+        && text.chars().count() > GROUP_DESCRIPTION_MAX_LENGTH
+    {
+        return Err(CoreError::InvalidInput(format!(
+            "community description is longer than {GROUP_DESCRIPTION_MAX_LENGTH} characters"
+        )));
     }
 
     Ok((name.to_owned(), description))
@@ -306,15 +306,15 @@ fn is_invite_link(input: &str) -> bool {
     let query_target = input.starts_with("whatsapp://chat")
         || input.starts_with("https://web.whatsapp.com/")
         || input.starts_with("http://web.whatsapp.com/");
-    if query_target {
-        if let Some(query) = input.split('?').nth(1) {
-            return query.split('&').any(|pair| {
-                pair.strip_prefix("code=").is_some_and(|value| {
-                    let value = value.trim_end_matches('/');
-                    !value.is_empty() && !value.chars().any(char::is_whitespace)
-                })
-            });
-        }
+    if query_target
+        && let Some(query) = input.split('?').nth(1)
+    {
+        return query.split('&').any(|pair| {
+            pair.strip_prefix("code=").is_some_and(|value| {
+                let value = value.trim_end_matches('/');
+                !value.is_empty() && !value.chars().any(char::is_whitespace)
+            })
+        });
     }
 
     // A bare invite code (no URL wrapper).

@@ -18,7 +18,7 @@ use crate::error::{CoreError, Result};
 use crate::types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};
 
 /// Current schema version. Bump together with `migrations()`.
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// Thread-safe handle to the application database.
 pub struct Store {
@@ -100,6 +100,33 @@ impl Store {
                 .execute_batch(include_str!("schema/006_statuses.sql"))
                 .map_err(storage_error)?;
         }
+
+        if version < 7 {
+            connection
+                .execute_batch(include_str!("schema/007_preview_meta.sql"))
+                .map_err(storage_error)?;
+        }
+
+        // Backfill the newest-message metadata for chats that predate it.
+        connection
+            .execute(
+                "UPDATE chats SET
+                     last_kind = COALESCE((
+                         SELECT kind FROM messages
+                         WHERE messages.chat_id = chats.id
+                         ORDER BY timestamp DESC, rowid DESC LIMIT 1
+                     ), last_kind),
+                     last_from_me = COALESCE((
+                         SELECT from_me FROM messages
+                         WHERE messages.chat_id = chats.id
+                         ORDER BY timestamp DESC, rowid DESC LIMIT 1
+                     ), last_from_me)
+                 WHERE EXISTS (
+                     SELECT 1 FROM messages WHERE messages.chat_id = chats.id
+                 )",
+                [],
+            )
+            .map_err(storage_error)?;
 
         // Self-heal activity timestamps that older builds let history sync
         // regress. The chat list must sort by the newest message, so this
@@ -257,7 +284,8 @@ impl Store {
         let mut statement = connection
             .prepare(
                 "SELECT id, name, last_message_preview, last_activity_ts,
-                        unread_count, muted, pinned, is_group, is_archived
+                        unread_count, muted, pinned, is_group, is_archived,
+                        last_kind, last_from_me
                  FROM chats
                  ORDER BY pinned DESC, last_activity_ts DESC",
             )
@@ -275,6 +303,11 @@ impl Store {
                     pinned: row.get::<_, i64>(6)? != 0,
                     is_group: row.get::<_, i64>(7)? != 0,
                     is_archived: row.get::<_, i64>(8)? != 0,
+                    last_message_kind: row
+                        .get::<_, Option<String>>(9)?
+                        .as_deref()
+                        .map(kind_from_str),
+                    last_from_me: row.get::<_, i64>(10)? != 0,
                 })
             })
             .map_err(storage_error)?;
@@ -539,6 +572,24 @@ impl Store {
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map(|ids| ids.into_iter().map(Jid::new).collect())
             .map_err(storage_error)
+    }
+
+    /// Record the newest message's kind and direction for the chat-list row
+    /// (tick prefix and localized media labels).
+    pub fn set_chat_last_message_meta(
+        &self,
+        chat_id: &Jid,
+        kind: MessageKind,
+        from_me: bool,
+    ) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "UPDATE chats SET last_kind = ?2, last_from_me = ?3 WHERE id = ?1",
+                params![chat_id.as_str(), kind_to_str(kind), i64::from(from_me)],
+            )
+            .map_err(storage_error)?;
+        Ok(())
     }
 
     /// Rename a chat (group subjects, manual renames). Returns true when the
@@ -861,6 +912,7 @@ impl MediaStore for Store {
         // Same order as `WaClient::send_text`: the chat row must exist before
         // the message references it.
         self.record_message_activity(chat_id, preview, message.timestamp, None, false)?;
+        self.set_chat_last_message_meta(chat_id, message.kind, message.from_me)?;
         self.upsert_message(message)
     }
 }

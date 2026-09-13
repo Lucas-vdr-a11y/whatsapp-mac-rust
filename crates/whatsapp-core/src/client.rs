@@ -511,6 +511,9 @@ impl WaClient {
         };
 
         // Chat row first: the message references it.
+        self.store
+            .set_chat_last_message_meta(chat_id, MessageKind::Text, true)
+            .ok();
         self.store.record_message_activity(
             chat_id,
             &preview_for(&message),
@@ -770,6 +773,13 @@ fn handle_inbound_message(
     ) {
         tracing::warn!(%error, "failed to update chat activity");
     }
+    if let Err(error) = store.set_chat_last_message_meta(
+        &message.chat_id,
+        message.kind,
+        message.from_me,
+    ) {
+        tracing::warn!(%error, "failed to update chat preview metadata");
+    }
     if let Err(error) = store.upsert_message(&message) {
         tracing::warn!(%error, "failed to store inbound message");
     }
@@ -997,6 +1007,8 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                     pinned: false,
                     is_group: chat_id.is_group(),
                     is_archived: conversation.archived.unwrap_or(false),
+                    last_message_kind: None,
+                    last_from_me: false,
                 };
                 if let Err(error) =
                     store.upsert_chat_from_history(&summary, name_is_real, &fallback_name)

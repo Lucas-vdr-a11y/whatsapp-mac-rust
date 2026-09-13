@@ -610,7 +610,7 @@ fn sha256_hex(data: &[u8]) -> String {
     }
     padded.extend_from_slice(&bit_len.to_be_bytes());
 
-    for chunk in padded.chunks_exact(64) {
+    for chunk in padded.as_chunks::<64>().0 {
         let mut schedule = [0u32; 64];
         for (index, word) in schedule.iter_mut().take(16).enumerate() {
             let start = index * 4;
@@ -1388,7 +1388,7 @@ mod tests {
         fn list_call_log(&self, limit: u32) -> Result<Vec<CallLogRecord>> {
             let rows = self.rows.lock().expect("fake store lock");
             let mut rows = rows.clone();
-            rows.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+            rows.sort_by_key(|row| std::cmp::Reverse(row.started_at));
             rows.truncate(limit as usize);
             Ok(rows)
         }

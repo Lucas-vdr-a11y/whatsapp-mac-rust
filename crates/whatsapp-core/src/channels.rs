@@ -179,6 +179,8 @@ mod tests {
             pinned: false,
             is_group: false,
             is_archived: false,
+            last_message_kind: None,
+            last_from_me: false,
         }
     }
 

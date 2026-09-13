@@ -95,6 +95,14 @@ pub struct ChatSummary {
     pub is_group: bool,
     /// True when archived by the user.
     pub is_archived: bool,
+    /// Kind of the newest message, when known. Lets the UI render a
+    /// localized preview label instead of parsing the preview string.
+    #[serde(default)]
+    pub last_message_kind: Option<MessageKind>,
+    /// True when the newest message was sent by this account; drives the
+    /// tick prefix the official client shows in the chat list.
+    #[serde(default)]
+    pub last_from_me: bool,
 }
 
 /// What a message contains. The UI switches on this enum.
