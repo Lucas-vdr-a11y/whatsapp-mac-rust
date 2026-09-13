@@ -18,7 +18,7 @@ use crate::error::{CoreError, Result};
 use crate::types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};
 
 /// Current schema version. Bump together with `migrations()`.
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// Thread-safe handle to the application database.
 pub struct Store {
@@ -119,6 +119,12 @@ impl Store {
                 .map_err(storage_error)?;
         }
 
+        if version < 10 {
+            connection
+                .execute_batch(include_str!("schema/010_name_source.sql"))
+                .map_err(storage_error)?;
+        }
+
         // Backfill the newest-message metadata for chats that predate it.
         connection
             .execute(
@@ -213,6 +219,9 @@ impl Store {
     ///
     /// - a real name (group subject, contact name) replaces only empty or
     ///   numeric placeholder names; an empty history name never overwrites;
+    ///   the name's provenance is recorded in `name_source` (`subject` for
+    ///   groups, `contact` for direct chats) so the repair passes can tell a
+    ///   real name from one that leaked in another way;
     /// - `server_unread`, when the sync chunk carries a counter, replaces the
     ///   locally accumulated one: the server count is the source of truth and
     ///   the only way locally accumulated unreads ever converge again. A chunk
@@ -232,13 +241,22 @@ impl Store {
             .execute(
                 "INSERT INTO chats (
                      id, name, last_message_preview, last_activity_ts,
-                     unread_count, muted, pinned, is_group, is_archived
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                     unread_count, muted, pinned, is_group, is_archived, name_source
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+                     CASE WHEN ?10 AND ?13 = 1 THEN 'subject'
+                          WHEN ?10 THEN 'contact'
+                          ELSE 'placeholder'
+                     END)
                  ON CONFLICT(id) DO UPDATE SET
                      name = CASE
                          WHEN ?10 AND (chats.name = '' OR chats.name = ?11)
                              THEN excluded.name
                          ELSE chats.name
+                     END,
+                     name_source = CASE
+                         WHEN ?10 AND (chats.name = '' OR chats.name = ?11)
+                             THEN excluded.name_source
+                         ELSE chats.name_source
                      END,
                      last_message_preview = COALESCE(
                          excluded.last_message_preview,
@@ -274,6 +292,7 @@ impl Store {
                     i64::from(name_is_real),
                     fallback_name,
                     i64::from(server_unread.is_some()),
+                    i64::from(chat.is_group),
                 ],
             )
             .map_err(storage_error)?;
@@ -410,7 +429,10 @@ impl Store {
             .map_err(storage_error)?;
 
         let rows = statement
-            .query_map(params![canonical.as_str(), before_id, limit], row_to_message)
+            .query_map(
+                params![canonical.as_str(), before_id, limit],
+                row_to_message,
+            )
             .map_err(storage_error)?;
 
         let mut messages = rows
@@ -485,6 +507,12 @@ impl Store {
     /// Creates the chat row when it does not exist yet (name from `name_hint`
     /// or the JID user part), updates the preview and activity timestamp, and
     /// optionally increments the unread counter.
+    ///
+    /// `name_hint` is a sender push name, which is only ever valid for direct
+    /// chats: applying it to a group row permanently renames the group to
+    /// whoever spoke last (audit S3), so group rows ignore it and keep their
+    /// placeholder until the group-metadata pass resolves the subject.
+    /// Provenance is recorded in `name_source`.
     pub fn record_message_activity(
         &self,
         chat_id: &Jid,
@@ -497,29 +525,48 @@ impl Store {
         let connection = self.lock()?;
         let fallback_name = chat_id.user().to_owned();
         let name_hint = name_hint.unwrap_or("");
+        let is_group = chat_id.is_group();
         connection
             .execute(
                 "INSERT INTO chats (
                      id, name, last_message_preview, last_activity_ts,
-                     unread_count, muted, pinned, is_group, is_archived
+                     unread_count, muted, pinned, is_group, is_archived, name_source
                  ) VALUES (
                      ?1,
                      CASE
+                         WHEN ?7 = 1 THEN ?3
                          WHEN ?2 != '' THEN ?2
                          ELSE COALESCE(
                              (SELECT name FROM contacts WHERE id = ?1),
                              ?3
                          )
                      END,
-                     ?4, ?5, ?6, 0, 0, ?7, 0)
+                     ?4, ?5, ?6, 0, 0, ?7, 0,
+                     CASE
+                         WHEN ?7 = 1 THEN 'placeholder'
+                         WHEN ?2 != '' THEN 'pushname'
+                         WHEN EXISTS(
+                             SELECT 1 FROM contacts
+                             WHERE id = ?1 AND COALESCE(name, push_name, '') != ''
+                         ) THEN 'contact'
+                         ELSE 'placeholder'
+                     END)
                  ON CONFLICT(id) DO UPDATE SET
                      name = CASE
                          -- A real push name replaces empty or numeric
                          -- placeholder names (JID user parts), but never
-                         -- clobbers a better name.
+                         -- clobbers a better name — and never touches a
+                         -- group row at all.
+                         WHEN ?7 = 1 THEN chats.name
                          WHEN ?2 != '' AND (chats.name = '' OR chats.name = ?3)
                              THEN ?2
                          ELSE chats.name
+                     END,
+                     name_source = CASE
+                         WHEN ?7 = 1 THEN chats.name_source
+                         WHEN ?2 != '' AND (chats.name = '' OR chats.name = ?3)
+                             THEN 'pushname'
+                         ELSE chats.name_source
                      END,
                      last_message_preview = excluded.last_message_preview,
                      last_activity_ts = MAX(
@@ -537,7 +584,7 @@ impl Store {
                     preview,
                     as_i64(timestamp),
                     i64::from(increment_unread),
-                    i64::from(chat_id.is_group()),
+                    i64::from(is_group),
                     i64::from(increment_unread),
                 ],
             )
@@ -720,14 +767,18 @@ impl Store {
             .map_err(storage_error)
     }
 
-    /// Group chats whose name is still a numeric placeholder.
+    /// Group chats whose name is still a numeric placeholder or whose name
+    /// was reset by the migration backfill (provenance `placeholder`) because
+    /// a push name had leaked into the row (audit S3).
     pub fn chats_needing_group_names(&self, limit: u32) -> Result<Vec<Jid>> {
         let connection = self.lock()?;
         let mut statement = connection
             .prepare(
                 "SELECT id FROM chats
                  WHERE is_group = 1
-                   AND (name = '' OR name = substr(id, 1, instr(id, '@') - 1))
+                   AND (name = ''
+                        OR name_source = 'placeholder'
+                        OR name = substr(id, 1, instr(id, '@') - 1))
                  ORDER BY last_activity_ts DESC
                  LIMIT ?1",
             )
@@ -765,12 +816,14 @@ impl Store {
     }
 
     /// Rename a chat (group subjects, manual renames). Returns true when the
-    /// row actually changed.
+    /// row actually changed. A rename through this path is subject-sourced,
+    /// which is what the repair passes key on.
     pub fn rename_chat(&self, jid: &Jid, name: &str) -> Result<bool> {
         let connection = self.lock()?;
         let changed = connection
             .execute(
-                "UPDATE chats SET name = ?2 WHERE id = ?1 AND name != ?2",
+                "UPDATE chats SET name = ?2, name_source = 'subject'
+                 WHERE id = ?1 AND name != ?2",
                 params![jid.as_str(), name],
             )
             .map_err(storage_error)?;
@@ -800,7 +853,8 @@ impl Store {
         }
         let renamed = connection
             .execute(
-                "UPDATE chats SET name = ?2 WHERE (id = ?1 OR id = ?3) AND name != ?2",
+                "UPDATE chats SET name = ?2, name_source = 'contact'
+                 WHERE (id = ?1 OR id = ?3) AND name != ?2",
                 params![jid.as_str(), name, canonical.as_str()],
             )
             .map_err(storage_error)?;
@@ -867,7 +921,12 @@ impl Store {
 
         let left_row = chat_identity(&tx, left_canon.as_str())?;
         let right_row = chat_identity(&tx, right_canon.as_str())?;
-        let canonical = pick_canonical_jid(&left_canon, left_row.as_ref(), &right_canon, right_row.as_ref());
+        let canonical = pick_canonical_jid(
+            &left_canon,
+            left_row.as_ref(),
+            &right_canon,
+            right_row.as_ref(),
+        );
         let other = if canonical.as_str() == left_canon.as_str() {
             right_canon.clone()
         } else {
@@ -891,14 +950,19 @@ impl Store {
         if let Some(other_row) = chat_identity(&tx, other.as_str())? {
             tx.execute(
                 "INSERT INTO chats (
-                     id, name, last_message_preview, last_activity_ts,
+                     id, name, name_source, last_message_preview, last_activity_ts,
                      unread_count, muted, pinned, is_group, is_archived
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ) VALUES (?1, ?2, ?10, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT(id) DO UPDATE SET
                      name = CASE
                          WHEN chats.name = '' OR chats.name = substr(chats.id, 1, instr(chats.id, '@') - 1)
                              THEN excluded.name
                          ELSE chats.name
+                     END,
+                     name_source = CASE
+                         WHEN chats.name = '' OR chats.name = substr(chats.id, 1, instr(chats.id, '@') - 1)
+                             THEN COALESCE(NULLIF(excluded.name_source, ''), chats.name_source)
+                         ELSE chats.name_source
                      END,
                      last_message_preview = COALESCE(
                          chats.last_message_preview,
@@ -919,6 +983,7 @@ impl Store {
                     other_row.pinned,
                     other_row.is_group,
                     other_row.archived,
+                    other_row.name_source,
                 ],
             )
             .map_err(storage_error)?;
@@ -926,7 +991,12 @@ impl Store {
                 .map_err(storage_error)?;
         }
 
-        for jid in [left.as_str(), right.as_str(), left_canon.as_str(), right_canon.as_str()] {
+        for jid in [
+            left.as_str(),
+            right.as_str(),
+            left_canon.as_str(),
+            right_canon.as_str(),
+        ] {
             tx.execute(
                 "INSERT INTO jid_aliases (jid, canonical) VALUES (?1, ?2)
                  ON CONFLICT(jid) DO UPDATE SET canonical = excluded.canonical",
@@ -942,6 +1012,73 @@ impl Store {
 
         tx.commit().map_err(storage_error)?;
         Ok(Some(canonical))
+    }
+
+    /// Merge group chats that arrived under both a group-LID id and a `@g.us`
+    /// twin with the same numeric id (audit S7).
+    ///
+    /// Group-LID rows were misclassified as direct chats by the old
+    /// `Jid::is_group`, so they created parallel rows beside the `@g.us` one.
+    /// Where the numeric identity matches, the rows are merged through
+    /// [`Store::link_jids`] (which moves messages/call-log rows and registers
+    /// the alias; the non-LID form wins as canonical). Returns the canonical
+    /// JID of every merge that happened.
+    pub fn merge_group_lid_twins(&self) -> Result<Vec<Jid>> {
+        let lids: Vec<Jid> = {
+            let connection = self.lock()?;
+            let mut statement = connection
+                .prepare("SELECT id FROM chats WHERE id LIKE '%@lid'")
+                .map_err(storage_error)?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(storage_error)?;
+            let ids: Vec<String> = rows
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(storage_error)?;
+            drop(statement);
+            drop(connection);
+            ids.into_iter()
+                .map(Jid::new)
+                .filter(|jid| jid.is_group_lid_form())
+                .collect()
+        };
+
+        let mut merged = Vec::new();
+        for lid in lids {
+            let twin = Jid::new(format!("{}@g.us", lid.user()));
+            let (trow, mcount): (i64, i64) = {
+                let connection = self.lock()?;
+                let t = connection
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM chats WHERE id = ?1)",
+                        params![twin.as_str()],
+                        |row| row.get(0),
+                    )
+                    .map_err(storage_error)?;
+                let m = connection
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM messages WHERE chat_id = ?1)",
+                        params![twin.as_str()],
+                        |row| row.get(0),
+                    )
+                    .map_err(storage_error)?;
+                drop(connection);
+                (t, m)
+            };
+            if trow == 0 && mcount == 0 {
+                // No local evidence of a @g.us twin; nothing to merge onto.
+                // A later pass retries once the twin shows up.
+                continue;
+            }
+            match self.link_jids(&lid, &twin) {
+                Ok(Some(canonical)) => merged.push(canonical),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%error, chat = %lid, "group-LID twin merge failed")
+                }
+            }
+        }
+        Ok(merged)
     }
 
     /// Add or replace a reaction; an empty emoji removes it.
@@ -1041,14 +1178,10 @@ impl Store {
 
         let pending: Vec<(String, String)> = {
             let mut statement = connection
-                .prepare(
-                    "SELECT reactor, emoji FROM pending_reactions WHERE message_id = ?1",
-                )
+                .prepare("SELECT reactor, emoji FROM pending_reactions WHERE message_id = ?1")
                 .map_err(storage_error)?;
             let rows = statement
-                .query_map(params![message_id], |row| {
-                    Ok((row.get(0)?, row.get(1)?))
-                })
+                .query_map(params![message_id], |row| Ok((row.get(0)?, row.get(1)?)))
                 .map_err(storage_error)?;
             rows.collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(storage_error)?
@@ -1272,6 +1405,7 @@ fn status_rank(status: MessageStatus) -> i64 {
 
 struct ChatIdentity {
     name: String,
+    name_source: String,
     preview: Option<String>,
     activity: i64,
     unread: i64,
@@ -1284,20 +1418,21 @@ struct ChatIdentity {
 fn chat_identity(connection: &Connection, id: &str) -> Result<Option<ChatIdentity>> {
     connection
         .query_row(
-            "SELECT name, last_message_preview, last_activity_ts,
+            "SELECT name, name_source, last_message_preview, last_activity_ts,
                     unread_count, muted, pinned, is_group, is_archived
              FROM chats WHERE id = ?1",
             params![id],
             |row| {
                 Ok(ChatIdentity {
                     name: row.get(0)?,
-                    preview: row.get(1)?,
-                    activity: row.get(2)?,
-                    unread: row.get(3)?,
-                    muted: row.get(4)?,
-                    pinned: row.get(5)?,
-                    is_group: row.get(6)?,
-                    archived: row.get(7)?,
+                    name_source: row.get(1)?,
+                    preview: row.get(2)?,
+                    activity: row.get(3)?,
+                    unread: row.get(4)?,
+                    muted: row.get(5)?,
+                    pinned: row.get(6)?,
+                    is_group: row.get(7)?,
+                    archived: row.get(8)?,
                 })
             },
         )

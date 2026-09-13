@@ -39,8 +39,26 @@ impl Jid {
     }
 
     /// True for group chats.
+    ///
+    /// Groups live on `g.us`, but LID-addressed groups surface as `@lid`
+    /// JIDs whose user part sits in the group-id numbering space (see
+    /// [`Jid::is_group_lid_form`]). Treating those as direct chats created
+    /// parallel, misclassified rows beside the `@g.us` ones (audit S7).
     pub fn is_group(&self) -> bool {
-        self.server() == Some("g.us")
+        match self.server() {
+            Some("g.us") => true,
+            Some("lid") => self.is_group_lid_form(),
+            _ => false,
+        }
+    }
+
+    /// True for `@lid` JIDs in the group-id numbering space: all digits and
+    /// at least 18 characters, the same ids `@g.us` uses (e.g. the 18-digit
+    /// `120363…` form). Direct-chat LIDs are phone-derived and much shorter
+    /// (15-16 digits at most), so the length check keeps them direct chats.
+    pub fn is_group_lid_form(&self) -> bool {
+        let user = self.user();
+        user.len() >= 18 && !user.bytes().any(|byte| !byte.is_ascii_digit())
     }
 
     /// True for the status broadcast feed.
@@ -82,6 +100,43 @@ impl From<String> for Jid {
 impl From<Jid> for String {
     fn from(value: Jid) -> Self {
         value.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_group_servers() {
+        assert!(Jid::new("120363404062663307@g.us").is_group());
+        assert!(!Jid::new("31657632048@s.whatsapp.net").is_group());
+        assert!(!Jid::new("status@broadcast").is_group());
+    }
+
+    #[test]
+    fn classifies_group_lid_forms_as_groups() {
+        // Group-id numbering space: 18+ digits, digits only.
+        assert!(Jid::new("120363404062663307@lid").is_group());
+        assert!(Jid::new("120363404062663307@lid").is_group_lid_form());
+        // Phone-derived direct-chat LIDs stay direct.
+        assert!(!Jid::new("14083231338501@lid").is_group());
+        assert!(!Jid::new("254970750308491@lid").is_group());
+        assert!(!Jid::new("254970750308491@lid").is_group_lid_form());
+        // 17 digits is still in direct space; the boundary is 18.
+        assert!(!Jid::new("99999999999999999@lid").is_group());
+        // A hyphenated legacy id can never be a group LID form.
+        assert!(!Jid::new("31647820621-1537097334@lid").is_group());
+    }
+
+    #[test]
+    fn lid_and_status_classifiers_keep_working() {
+        assert!(Jid::new("31657632048@lid").is_lid());
+        assert!(Jid::new("status@broadcast").is_status());
+        assert_eq!(
+            Jid::new("120363404062663307@lid").user(),
+            "120363404062663307"
+        );
     }
 }
 

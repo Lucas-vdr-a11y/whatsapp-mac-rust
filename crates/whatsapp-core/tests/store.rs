@@ -213,7 +213,9 @@ fn message_status_only_upgrades_never_downgrades() {
     store
         .upsert_message(&sample_message("m1", chat_id, 10))
         .unwrap();
-    store.set_message_status("m1", MessageStatus::Delivered).unwrap();
+    store
+        .set_message_status("m1", MessageStatus::Delivered)
+        .unwrap();
     store.set_message_status("m1", MessageStatus::Sent).unwrap();
     assert_eq!(
         store.find_message("m1").unwrap().unwrap().status,
@@ -231,7 +233,9 @@ fn message_status_only_upgrades_never_downgrades() {
     );
 
     // Pending is the bottom of the ladder: it never overrides anything.
-    store.set_message_status("m1", MessageStatus::Pending).unwrap();
+    store
+        .set_message_status("m1", MessageStatus::Pending)
+        .unwrap();
     assert_eq!(
         store.find_message("m1").unwrap().unwrap().status,
         MessageStatus::Read
@@ -248,7 +252,9 @@ fn message_status_only_upgrades_never_downgrades() {
     store
         .upsert_message(&sample_message("m2", chat_id, 20))
         .unwrap();
-    store.set_message_status("m2", MessageStatus::Failed).unwrap();
+    store
+        .set_message_status("m2", MessageStatus::Failed)
+        .unwrap();
     store.set_message_status("m2", MessageStatus::Read).unwrap();
     assert_eq!(
         store.find_message("m2").unwrap().unwrap().status,
@@ -442,9 +448,7 @@ fn lid_and_phone_jids_merge_into_one_chat() {
     let pn = "31619446549@s.whatsapp.net";
     let lid = "254970750308491@lid";
 
-    store
-        .upsert_chat(&sample_chat(pn, "Meike", 100))
-        .unwrap();
+    store.upsert_chat(&sample_chat(pn, "Meike", 100)).unwrap();
     store
         .upsert_message(&sample_message("m-pn", pn, 10))
         .unwrap();
@@ -610,7 +614,9 @@ fn reactions_arriving_early_are_buffered_then_drained() {
 
     // The message arrives (history sync or live traffic) and drains the
     // buffer.
-    store.upsert_chat(&sample_chat(chat_id, "Alice", 200)).unwrap();
+    store
+        .upsert_chat(&sample_chat(chat_id, "Alice", 200))
+        .unwrap();
     store
         .upsert_message(&sample_message("m1", chat_id, 150))
         .unwrap();
@@ -666,11 +672,15 @@ fn upserting_a_message_keeps_its_original_chat() {
         .upsert_message(&sample_message("m1", "b@s.whatsapp.net", 20))
         .unwrap();
 
-    let in_a = store.list_messages(&Jid::new("a@s.whatsapp.net"), 10).unwrap();
+    let in_a = store
+        .list_messages(&Jid::new("a@s.whatsapp.net"), 10)
+        .unwrap();
     assert_eq!(in_a.len(), 1);
     assert_eq!(in_a[0].chat_id.as_str(), "a@s.whatsapp.net");
     assert_eq!(in_a[0].status, MessageStatus::Delivered);
-    let in_b = store.list_messages(&Jid::new("b@s.whatsapp.net"), 10).unwrap();
+    let in_b = store
+        .list_messages(&Jid::new("b@s.whatsapp.net"), 10)
+        .unwrap();
     assert!(in_b.is_empty(), "chat id must stay authoritative");
 }
 
@@ -712,5 +722,209 @@ fn linking_jids_moves_call_log_rows() {
         rows[0].chat_id.as_ref().map(Jid::as_str),
         Some(pn),
         "call log must follow the canonical chat id"
+    );
+}
+
+#[test]
+fn group_chats_ignore_push_name_hints() {
+    let store = Store::open_in_memory().expect("open store");
+    let group = "120363404062663307@g.us";
+
+    // Live traffic creates the group row: the push name of whoever spoke
+    // last must never become the chat name (audit S3).
+    store
+        .record_message_activity(&Jid::new(group), "hoi", 100, Some("Meike"), true)
+        .unwrap();
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats.len(), 1);
+    assert!(chats[0].is_group);
+    assert_eq!(chats[0].name, "120363404062663307");
+    assert_eq!(chats[0].unread_count, 1);
+
+    // The placeholder name is picked up by the group-name pass.
+    let targets = store.chats_needing_group_names(10).unwrap();
+    assert_eq!(targets, vec![Jid::new(group)]);
+
+    // A subject resolves the row, and later push names never clobber it.
+    assert!(
+        store
+            .rename_chat(&Jid::new(group), "Algemene chat")
+            .unwrap()
+    );
+    store
+        .record_message_activity(&Jid::new(group), "hoi weer", 200, Some("Senna"), false)
+        .unwrap();
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats[0].name, "Algemene chat");
+    assert!(store.chats_needing_group_names(10).unwrap().is_empty());
+
+    // Direct chats keep using push names.
+    let direct = "31657632048@s.whatsapp.net";
+    store
+        .record_message_activity(&Jid::new(direct), "hoi", 300, Some("Robert"), false)
+        .unwrap();
+    let chats = store.list_chats().unwrap();
+    let direct_chat = chats
+        .iter()
+        .find(|chat| chat.id.as_str() == direct)
+        .unwrap();
+    assert_eq!(direct_chat.name, "Robert");
+}
+
+#[test]
+fn migration_010_backfill_resets_poisoned_group_names() {
+    // Build a v9-shaped database whose group rows carry push names instead
+    // of subjects, exactly the state the audit found in the wild.
+    let dir = std::env::temp_dir().join(format!(
+        "rustwa-store-migration-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("rustwa.db");
+
+    {
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE chats (
+                     id TEXT PRIMARY KEY,
+                     name TEXT NOT NULL DEFAULT '',
+                     last_message_preview TEXT,
+                     last_activity_ts INTEGER NOT NULL DEFAULT 0,
+                     unread_count INTEGER NOT NULL DEFAULT 0,
+                     muted INTEGER NOT NULL DEFAULT 0,
+                     pinned INTEGER NOT NULL DEFAULT 0,
+                     is_group INTEGER NOT NULL DEFAULT 0,
+                     is_archived INTEGER NOT NULL DEFAULT 0,
+                     last_kind TEXT,
+                     last_from_me INTEGER NOT NULL DEFAULT 0
+                 );
+                 CREATE TABLE messages (
+                     id TEXT PRIMARY KEY,
+                     chat_id TEXT NOT NULL REFERENCES chats (id) ON DELETE CASCADE,
+                     sender_id TEXT NOT NULL,
+                     from_me INTEGER NOT NULL,
+                     timestamp INTEGER NOT NULL,
+                     kind TEXT NOT NULL,
+                     text TEXT,
+                     status TEXT NOT NULL DEFAULT 'pending'
+                 );
+                 INSERT INTO chats (id, name, is_group)
+                     VALUES ('120363404062663307@g.us', 'Meike', 1);
+                 INSERT INTO chats (id, name, is_group)
+                     VALUES ('120363404062663307@lid', 'Senna', 0);
+                 INSERT INTO chats (id, name, is_group)
+                     VALUES ('31657632048@s.whatsapp.net', 'Robert', 0);
+                 PRAGMA user_version = 9;",
+            )
+            .unwrap();
+    }
+
+    let store = Store::open(&path).unwrap();
+    let chats = store.list_chats().unwrap();
+    let by_id = |id: &str| chats.iter().find(|chat| chat.id.as_str() == id).unwrap();
+
+    // Every group row (including the reclassified group-LID row) is reset to
+    // a placeholder so the group-metadata pass re-fetches subjects.
+    assert_eq!(by_id("120363404062663307@g.us").name, "");
+    assert!(by_id("120363404062663307@g.us").is_group);
+    assert_eq!(by_id("120363404062663307@lid").name, "");
+    assert!(
+        by_id("120363404062663307@lid").is_group,
+        "group-LID rows must be reclassified as groups"
+    );
+    // Direct chats keep their name.
+    assert_eq!(by_id("31657632048@s.whatsapp.net").name, "Robert");
+
+    // Both group rows are now targets for the repair pass.
+    let mut targets = store.chats_needing_group_names(100).unwrap();
+    targets.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    assert_eq!(
+        targets,
+        vec![
+            Jid::new("120363404062663307@g.us"),
+            Jid::new("120363404062663307@lid"),
+        ]
+    );
+
+    // Re-running the migrations must be a no-op.
+    store.migrate_for_tests().unwrap();
+    assert_eq!(store.list_chats().unwrap().len(), 3);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn group_lid_twins_merge_onto_the_g_us_row() {
+    let store = Store::open_in_memory().expect("open store");
+    let gus = "120363404062663307@g.us";
+    let lid = "120363404062663307@lid";
+
+    let mut gus_chat = sample_chat(gus, "Algemene chat", 100);
+    gus_chat.is_group = true;
+    store.upsert_chat(&gus_chat).unwrap();
+    store
+        .upsert_message(&sample_message("m-gus", gus, 10))
+        .unwrap();
+
+    // The LID twin was misclassified as a direct chat by the old classifier.
+    let mut lid_chat = sample_chat(lid, "120363404062663307", 200);
+    lid_chat.is_group = false;
+    lid_chat.unread_count = 5;
+    store.upsert_chat(&lid_chat).unwrap();
+    store
+        .upsert_message(&sample_message("m-lid", lid, 20))
+        .unwrap();
+
+    let merged = store.merge_group_lid_twins().unwrap();
+    assert_eq!(merged, vec![Jid::new(gus)]);
+
+    // The @g.us row survives (non-LID form wins), the LID row is gone and
+    // registered as its alias, and the messages live together.
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats.len(), 1);
+    assert_eq!(chats[0].id.as_str(), gus);
+    assert!(chats[0].is_group);
+    assert_eq!(chats[0].unread_count, 5);
+    assert_eq!(chats[0].name, "Algemene chat");
+    assert_eq!(
+        store.canonical_jid(&Jid::new(lid)).unwrap().as_str(),
+        gus,
+        "the LID form must be registered as an alias"
+    );
+    let via_gus = store.list_messages(&Jid::new(gus), 10).unwrap();
+    let ids: Vec<&str> = via_gus.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["m-gus", "m-lid"]);
+
+    // Without a twin there is nothing to merge, and a second run is a no-op.
+    assert!(store.merge_group_lid_twins().unwrap().is_empty());
+}
+
+#[test]
+fn group_lid_rows_without_a_twin_are_left_alone() {
+    let store = Store::open_in_memory().expect("open store");
+    let lid = "120363404062663307@lid";
+
+    let mut chat = sample_chat(lid, "120363404062663307", 100);
+    chat.is_group = true;
+    store.upsert_chat(&chat).unwrap();
+    store
+        .upsert_message(&sample_message("m-lid", lid, 10))
+        .unwrap();
+
+    // No @g.us row and no @g.us messages: nothing to merge onto.
+    let merged = store.merge_group_lid_twins().unwrap();
+    assert!(merged.is_empty());
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats.len(), 1);
+    assert_eq!(chats[0].id.as_str(), lid);
+    assert_eq!(
+        store.canonical_jid(&Jid::new(lid)).unwrap().as_str(),
+        lid,
+        "no alias may be registered without a twin"
     );
 }

@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::sync::{Mutex, broadcast};
@@ -38,6 +38,60 @@ pub const EVENT_BUS_CAPACITY: usize = 1024;
 
 /// Fallback sender id for own messages before the account JID is known.
 const ME_PLACEHOLDER: &str = "me";
+
+/// Cap for the group-subject resolution pass.
+const GROUP_NAME_PASS_CAP: u32 = 1000;
+/// Cap for the contact-name resolution pass.
+const CONTACT_NAME_PASS_CAP: u32 = 1000;
+/// Silence window before a requested name pass actually runs, so a
+/// history-sync burst collapses into a single pass instead of hammering
+/// usync/group-metadata per event.
+const NAME_PASS_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(30);
+/// Pause between the first history import and the full app-state replay, so
+/// the store has finished writing the imported chat rows before the
+/// chat-list patches land on them.
+const FULL_SYNC_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Wake-up handle for the event-driven name-resolution passes (audit S6).
+///
+/// The passes used to run once, clock-driven and capped, so chats imported
+/// later kept raw JID names forever. They now run on demand: every
+/// history-sync import and every burst of chat updates requests a run, and a
+/// scheduler task debounces the requests into a single pass.
+#[derive(Clone, Default)]
+struct NamePassTrigger {
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl NamePassTrigger {
+    /// Ask for a (debounced) pass run. Bursts collapse into one.
+    fn request(&self) {
+        // `notify_one` stores a permit when nobody waits yet, so requests
+        // that land before the scheduler awaits are never lost.
+        self.notify.notify_one();
+    }
+}
+
+/// One-shot gate for the full `regular` app-state replay (audit S1).
+///
+/// Incremental app-state syncs never re-deliver chat-list patches another
+/// device already acked, which is why archive/mute/pin flags were missing.
+/// Once per session — after the first history-sync import — the `regular`
+/// collection is re-fetched as a full snapshot, replaying every patch.
+#[derive(Clone, Default)]
+struct FullSyncGate {
+    fired: Arc<AtomicBool>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl FullSyncGate {
+    /// Request the replay; only the first request per session is honored.
+    fn request_once(&self) {
+        if !self.fired.swap(true, Ordering::SeqCst) {
+            self.notify.notify_one();
+        }
+    }
+}
 
 /// Configuration for [`WaClient`].
 #[derive(Clone)]
@@ -89,6 +143,9 @@ pub struct WaClient {
     /// 0 = disconnected, 1 = connecting, 2 = connected. Shared with event
     /// handlers so upstream lifecycle events update the state machine.
     connection: Arc<AtomicU8>,
+    /// Guards the one-shot full `regular` app-state replay (see
+    /// [`FullSyncGate`]): at most once per session.
+    full_sync: FullSyncGate,
     /// Active call manager; present once connected with a media backend.
     #[cfg(feature = "calls")]
     calls: Arc<tokio::sync::Mutex<Option<crate::calls::manager::CallManager>>>,
@@ -105,6 +162,7 @@ impl WaClient {
             handle: Mutex::new(None),
             own_jid: Arc::new(StdMutex::new(None)),
             connection: Arc::new(AtomicU8::new(0)),
+            full_sync: FullSyncGate::default(),
             #[cfg(feature = "calls")]
             calls: Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -193,6 +251,11 @@ impl WaClient {
         let bus_messages = bus.clone();
         let bus_updates = bus.clone();
         let bus_history = bus.clone();
+        let name_trigger = NamePassTrigger::default();
+        let name_trigger_messages = name_trigger.clone();
+        let name_trigger_updates = name_trigger.clone();
+        let name_trigger_history = name_trigger.clone();
+        let full_sync_history = self.full_sync.clone();
         // The call event slot exists in every build; only the `calls`
         // feature compiles the manager that consumes it.
         #[cfg(feature = "calls")]
@@ -283,8 +346,9 @@ impl WaClient {
             .on_message(move |context| {
                 let bus = bus_messages.clone();
                 let store = Arc::clone(&store_messages);
+                let trigger = name_trigger_messages.clone();
                 async move {
-                    handle_inbound_message(&bus, &store, &context);
+                    handle_inbound_message(&bus, &store, &trigger, &context);
                 }
             })
             .on_event_for(
@@ -305,14 +369,17 @@ impl WaClient {
                 move |event, _client| {
                     let bus = bus_updates.clone();
                     let store = Arc::clone(&store_updates);
+                    let trigger = name_trigger_updates.clone();
                     async move {
-                        handle_update_event(&bus, &store, event.as_ref());
+                        handle_update_event(&bus, &store, &trigger, event.as_ref());
                     }
                 },
             )
             .on_event_for(&[EventKind::HistorySync], move |event, _client| {
                 let bus = bus_history.clone();
                 let store = Arc::clone(&store_history);
+                let trigger = name_trigger_history.clone();
+                let full_sync = full_sync_history.clone();
                 async move {
                     // Decompression and parsing are CPU-bound: keep them off
                     // the async worker threads.
@@ -321,7 +388,12 @@ impl WaClient {
                         // Fire-and-forget: dropping the handle detaches the
                         // blocking task, which is what we want here.
                         drop(tokio::task::spawn_blocking(move || {
-                            import_history_sync(&bus, &store, &sync);
+                            import_history_sync(&bus, &store, &sync, &trigger);
+                            // The first import of a session means the chat
+                            // rows exist; replay the chat-list app state from
+                            // a full snapshot once so archive/mute/pin/read
+                            // patches the phone acked long ago are applied.
+                            full_sync.request_once();
                         }));
                     }
                 }
@@ -408,112 +480,66 @@ impl WaClient {
             });
         }
 
-        // Group subjects are missing from some history-sync conversations;
-        // fetch them from the server in the background, politely spaced.
+        // Group subjects and contact names used to be resolved by two
+        // one-shot, clock-driven, capped passes right after connect, so chats
+        // imported after them kept raw JID names forever (audit S6). They now
+        // run event-driven: history-sync imports, chat patches and inbound
+        // messages all request a run, and this scheduler debounces the
+        // requests into a single pass (no busy looping). Only a `Weak`
+        // handle to the client is kept, so the loop ends when the session's
+        // bot is shut down instead of pinning it alive forever.
         {
-            let client = bot.client();
+            let client = Arc::downgrade(&bot.client());
             let store = Arc::clone(&self.store);
             let bus = self.events.clone();
+            let trigger = name_trigger.clone();
             tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                let targets = match store.chats_needing_group_names(200) {
-                    Ok(targets) => targets,
-                    Err(error) => {
-                        tracing::warn!(%error, "group name pass: listing chats failed");
-                        return;
+                loop {
+                    trigger.notify.notified().await;
+                    // Debounce: wait for the burst to settle before hitting
+                    // usync / group metadata.
+                    loop {
+                        tokio::select! {
+                            _ = tokio::time::sleep(NAME_PASS_DEBOUNCE) => break,
+                            _ = trigger.notify.notified() => {}
+                        }
                     }
-                };
-                let mut resolved = 0usize;
-                for chat_id in targets {
-                    let Ok(upstream) = to_upstream_jid(&chat_id) else {
-                        continue;
+                    let Some(client) = client.upgrade() else {
+                        break;
                     };
-                    match client.groups().get_metadata(&upstream).await {
-                        Ok(metadata) => {
-                            let subject = metadata.subject.trim().to_owned();
-                            if !subject.is_empty()
-                                && matches!(store.rename_chat(&chat_id, &subject), Ok(true))
-                            {
-                                resolved += 1;
-                                let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent {
-                                    chat_id: chat_id.clone(),
-                                }));
-                            }
-                        }
-                        Err(error) => {
-                            tracing::debug!(%error, chat = %chat_id, "group metadata fetch failed");
-                        }
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    run_name_passes(&client, &store, &bus).await;
+                    drop(client);
                 }
-                tracing::info!(resolved, "group name pass finished");
             });
         }
+        // Kick a first pass shortly after connect; history imports re-trigger.
+        name_trigger.request();
 
-        // Direct chats that still show a phone/LID number: resolve them
-        // through usync so LID rows can be merged onto the named PN chat.
+        // Replay the chat-list app state from a full snapshot once per
+        // session (audit S1). Incremental syncs never re-deliver patches the
+        // phone already acked, which left archive/mute/pin/read flags behind.
+        // The replay waits for the first history-sync import so the chat rows
+        // it patches exist (A1's deferred writes included), then runs once.
         {
-            let client = bot.client();
-            let store = Arc::clone(&self.store);
-            let bus = self.events.clone();
+            let client = Arc::downgrade(&bot.client());
+            let gate = self.full_sync.clone();
+            let trigger = name_trigger.clone();
             tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(6)).await;
-                let targets = match store.chats_needing_contact_names(80) {
-                    Ok(targets) => targets,
-                    Err(error) => {
-                        tracing::warn!(%error, "contact name pass: listing chats failed");
-                        return;
-                    }
-                };
-                if targets.is_empty() {
+                gate.notify.notified().await;
+                let Some(client) = client.upgrade() else {
                     return;
-                }
-                let mut merged = 0usize;
-                for chunk in targets.chunks(15) {
-                    match client
-                        .contacts()
-                        .get_user_info(
-                            &chunk
-                                .iter()
-                                .filter_map(|jid| to_upstream_jid(jid).ok())
-                                .collect::<Vec<_>>(),
-                        )
-                        .await
-                    {
-                        Ok(info) => {
-                            for (upstream, user) in info {
-                                let jid = from_upstream_jid(&upstream);
-                                if let Some(lid) = user.lid.as_ref() {
-                                    match store.link_jids(&jid, &from_upstream_jid(lid)) {
-                                        Ok(Some(canonical)) => {
-                                            merged += 1;
-                                            let _ = bus.send(CoreEvent::ChatUpdated(
-                                                ChatUpdatedEvent { chat_id: canonical },
-                                            ));
-                                        }
-                                        Ok(None) => {}
-                                        Err(error) => tracing::debug!(
-                                            %error,
-                                            chat = %jid,
-                                            "contact name pass: link failed"
-                                        ),
-                                    }
-                                }
-                                if let Some(name) = user.verified_name.and_then(|v| v.name) {
-                                    let trimmed = name.trim();
-                                    if !trimmed.is_empty() {
-                                        let _ = store.apply_contact_name(&jid, trimmed);
-                                    }
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            tracing::debug!(%error, "contact name pass: usync failed");
-                        }
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                }
-                tracing::info!(merged, "contact name pass finished");
+                };
+                tokio::time::sleep(FULL_SYNC_DELAY).await;
+                client
+                    .process_sync_task(whatsapp_rust::sync_task::MajorSyncTask::AppStateSync {
+                        name: whatsapp_rust::wacore::appstate::patch_decode::WAPatchName::Regular,
+                        full_sync: true,
+                    })
+                    .await;
+                tracing::info!("full regular app-state replay finished");
+                // The snapshot can surface chats that were deferred or still
+                // unnamed; give the name passes a shot.
+                trigger.request();
             });
         }
 
@@ -622,36 +648,39 @@ impl WaClient {
             .send_message_with_options(
                 to,
                 wa::Message::text(text),
-                whatsapp_rust::send::SendOptions::default()
-                    .with_message_id(message.id.clone()),
+                whatsapp_rust::send::SendOptions::default().with_message_id(message.id.clone()),
             )
             .await;
 
         match sent {
             Ok(_) => {
                 message.status = MessageStatus::Sent;
-                if let Err(error) = self.store.set_message_status(&message.id, MessageStatus::Sent)
+                if let Err(error) = self
+                    .store
+                    .set_message_status(&message.id, MessageStatus::Sent)
                 {
                     tracing::warn!(%error, "failed to upgrade sent message status");
                 }
-                let _ = self.events.send(CoreEvent::MessageStatusChanged(
-                    MessageStatusChangedEvent {
-                        chat_id: message.chat_id.clone(),
-                        message_id: message.id.clone(),
-                        status: MessageStatus::Sent,
-                    },
-                ));
+                let _ =
+                    self.events
+                        .send(CoreEvent::MessageStatusChanged(MessageStatusChangedEvent {
+                            chat_id: message.chat_id.clone(),
+                            message_id: message.id.clone(),
+                            status: MessageStatus::Sent,
+                        }));
                 Ok(message)
             }
             Err(error) => {
-                let _ = self.store.set_message_status(&message.id, MessageStatus::Failed);
-                let _ = self.events.send(CoreEvent::MessageStatusChanged(
-                    MessageStatusChangedEvent {
-                        chat_id: message.chat_id.clone(),
-                        message_id: message.id.clone(),
-                        status: MessageStatus::Failed,
-                    },
-                ));
+                let _ = self
+                    .store
+                    .set_message_status(&message.id, MessageStatus::Failed);
+                let _ =
+                    self.events
+                        .send(CoreEvent::MessageStatusChanged(MessageStatusChangedEvent {
+                            chat_id: message.chat_id.clone(),
+                            message_id: message.id.clone(),
+                            status: MessageStatus::Failed,
+                        }));
                 Err(CoreError::Protocol(error.to_string()))
             }
         }
@@ -808,6 +837,137 @@ impl WaClient {
     }
 }
 
+/// Run both name-resolution passes (group subjects, then contact names).
+///
+/// Event-driven since audit S6; each pass no-ops when nothing needs a name.
+async fn run_name_passes(
+    client: &whatsapp_rust::Client,
+    store: &Store,
+    bus: &broadcast::Sender<CoreEvent>,
+) {
+    run_group_name_pass(client, store, bus).await;
+    run_contact_name_pass(client, store, bus).await;
+}
+
+/// Fetch subjects for group chats whose name is still a placeholder or was
+/// reset by the migration backfill, politely spaced.
+async fn run_group_name_pass(
+    client: &whatsapp_rust::Client,
+    store: &Store,
+    bus: &broadcast::Sender<CoreEvent>,
+) {
+    let targets = match store.chats_needing_group_names(GROUP_NAME_PASS_CAP) {
+        Ok(targets) => targets,
+        Err(error) => {
+            tracing::warn!(%error, "group name pass: listing chats failed");
+            return;
+        }
+    };
+    if targets.is_empty() {
+        return;
+    }
+    let mut resolved = 0usize;
+    let mut failed = 0usize;
+    for chat_id in targets {
+        let Ok(upstream) = to_upstream_jid(&chat_id) else {
+            failed += 1;
+            continue;
+        };
+        match client.groups().get_metadata(&upstream).await {
+            Ok(metadata) => {
+                let subject = metadata.subject.trim().to_owned();
+                if !subject.is_empty() && matches!(store.rename_chat(&chat_id, &subject), Ok(true))
+                {
+                    resolved += 1;
+                    let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent {
+                        chat_id: chat_id.clone(),
+                    }));
+                }
+            }
+            Err(error) => {
+                failed += 1;
+                tracing::debug!(%error, chat = %chat_id, "group metadata fetch failed");
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    tracing::info!(
+        resolved,
+        failed,
+        "group name pass finished ({} pending)",
+        resolved + failed
+    );
+}
+
+/// Resolve direct chats that still show a phone/LID number through usync, so
+/// LID rows can be merged onto the named PN chat.
+async fn run_contact_name_pass(
+    client: &whatsapp_rust::Client,
+    store: &Store,
+    bus: &broadcast::Sender<CoreEvent>,
+) {
+    let targets = match store.chats_needing_contact_names(CONTACT_NAME_PASS_CAP) {
+        Ok(targets) => targets,
+        Err(error) => {
+            tracing::warn!(%error, "contact name pass: listing chats failed");
+            return;
+        }
+    };
+    if targets.is_empty() {
+        return;
+    }
+    let mut merged = 0usize;
+    let mut named = 0usize;
+    for chunk in targets.chunks(15) {
+        match client
+            .contacts()
+            .get_user_info(
+                &chunk
+                    .iter()
+                    .filter_map(|jid| to_upstream_jid(jid).ok())
+                    .collect::<Vec<_>>(),
+            )
+            .await
+        {
+            Ok(info) => {
+                for (upstream, user) in info {
+                    let jid = from_upstream_jid(&upstream);
+                    if let Some(lid) = user.lid.as_ref() {
+                        match store.link_jids(&jid, &from_upstream_jid(lid)) {
+                            Ok(Some(canonical)) => {
+                                merged += 1;
+                                let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent {
+                                    chat_id: canonical,
+                                }));
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                tracing::debug!(%error, chat = %jid, "contact name pass: link failed")
+                            }
+                        }
+                    }
+                    if let Some(name) = user.verified_name.and_then(|v| v.name) {
+                        let trimmed = name.trim();
+                        if !trimmed.is_empty()
+                            && matches!(store.apply_contact_name(&jid, trimmed), Ok(true))
+                        {
+                            named += 1;
+                            let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent {
+                                chat_id: jid.clone(),
+                            }));
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::debug!(%error, "contact name pass: usync failed");
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    tracing::info!(merged, named, "contact name pass finished");
+}
+
 /// Connection-level events.
 fn handle_lifecycle_event(
     bus: &broadcast::Sender<CoreEvent>,
@@ -871,6 +1031,7 @@ fn handle_lifecycle_event(
 fn handle_inbound_message(
     bus: &broadcast::Sender<CoreEvent>,
     store: &Store,
+    trigger: &NamePassTrigger,
     context: &MessageContext,
 ) {
     let info = &context.info;
@@ -922,7 +1083,12 @@ fn handle_inbound_message(
         view_once: crate::media::is_view_once(&context.message),
     };
 
-    let name_hint = (!info.push_name.trim().is_empty()).then_some(info.push_name.as_str());
+    // A push name is only a valid name hint for direct chats: applying it to
+    // a group row permanently renames the group to whoever spoke last (audit
+    // S3). The store ignores hints for group rows too; this guard keeps the
+    // intent visible at the call site like the history path does.
+    let name_hint = (!info.push_name.trim().is_empty() && !message.chat_id.is_group())
+        .then_some(info.push_name.as_str());
     let preview = preview_for(&message);
 
     // The chat row must exist before the message (foreign key), so record the
@@ -963,6 +1129,9 @@ fn handle_inbound_message(
     let chat_id = message.chat_id.clone();
     let _ = bus.send(CoreEvent::Message(message));
     let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+    // Live traffic can create placeholder chat rows; the name passes pick
+    // them up on the next debounced run.
+    trigger.request();
 }
 
 /// Revokes and edits arrive as protocol messages; apply them to the store and
@@ -1074,7 +1243,12 @@ fn handle_reaction(
 }
 
 /// Receipts, typing and presence: publish and, for receipts, persist.
-fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event: &Event) {
+fn handle_update_event(
+    bus: &broadcast::Sender<CoreEvent>,
+    store: &Store,
+    trigger: &NamePassTrigger,
+    event: &Event,
+) {
     match event {
         Event::Receipt(receipt) => {
             let Some(status) = receipt_status(&receipt.r#type) else {
@@ -1134,6 +1308,9 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
                             chat = %chat_id,
                             "archive patch created a deferred chat row (history not synced yet)"
                         );
+                        // A deferred row is a new placeholder row; the name
+                        // passes should pick it up.
+                        trigger.request();
                     }
                     let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
                 }
@@ -1153,6 +1330,7 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
                             chat = %chat_id,
                             "mute patch created a deferred chat row (history not synced yet)"
                         );
+                        trigger.request();
                     }
                     let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
                 }
@@ -1172,6 +1350,7 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
                             chat = %chat_id,
                             "pin patch created a deferred chat row (history not synced yet)"
                         );
+                        trigger.request();
                     }
                     let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
                 }
@@ -1197,6 +1376,7 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
                             chat = %chat_id,
                             "read patch created a deferred chat row (history not synced yet)"
                         );
+                        trigger.request();
                     }
                     let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
                 }
@@ -1264,7 +1444,12 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
 /// stops the import — the stream cannot recover from those, so they are
 /// logged *and* surfaced as a `CoreEvent::Error` instead of being lost
 /// silently.
-fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: &LazyHistorySync) {
+fn import_history_sync(
+    bus: &broadcast::Sender<CoreEvent>,
+    store: &Store,
+    sync: &LazyHistorySync,
+    trigger: &NamePassTrigger,
+) {
     let mut stream = sync.stream();
     let mut chat_count = 0usize;
     let mut message_count = 0usize;
@@ -1422,6 +1607,23 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
         skipped,
         "history sync imported"
     );
+
+    // Newly imported group-LID rows can duplicate an existing @g.us chat;
+    // merge the twins before the name passes look at them (audit S7).
+    match store.merge_group_lid_twins() {
+        Ok(merged) if !merged.is_empty() => {
+            tracing::info!(count = merged.len(), "history: merged group-LID twins");
+            for chat_id in merged {
+                let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+            }
+        }
+        Ok(_) => {}
+        Err(error) => tracing::warn!(%error, "history: group-LID twin merge failed"),
+    }
+
+    // The import may have created placeholder rows; the name passes pick
+    // them up on the next debounced run.
+    trigger.request();
 }
 
 /// WhatsApp history timestamps are usually milliseconds, but some server
