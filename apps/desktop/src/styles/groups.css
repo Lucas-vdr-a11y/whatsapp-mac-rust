@@ -1,0 +1,620 @@
+/* Group info panels and participant pickers.
+ * Owned by the groups-UI workstream. */
+
+/* ------------------------------------------------------------------ */
+/* New-chat modal: chips, checkmarks, footer                           */
+/* ------------------------------------------------------------------ */
+
+.selected-chips {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px 0;
+}
+
+.contact-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 4px 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--bg-input);
+}
+
+.avatar.tiny {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+
+.contact-chip-name {
+  max-width: 160px;
+  font-size: 13.5px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.contact-chip-remove {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+}
+
+.contact-chip-remove:hover {
+  background: var(--bg-hover);
+  color: var(--icon-strong);
+}
+
+.contact-row.selected {
+  background: rgba(0, 168, 132, 0.14);
+}
+
+.contact-row.selected:hover {
+  background: rgba(0, 168, 132, 0.2);
+}
+
+.contact-check {
+  flex: none;
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: var(--radius-full);
+  color: var(--unread-badge-text);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.contact-check.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.new-chat-participants {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.subject-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 16px 16px 4px;
+  padding: 9px 12px 7px;
+  border-radius: var(--radius-md);
+  border-bottom: 2px solid transparent;
+  background: var(--bg-input);
+  transition: border-color 120ms ease;
+}
+
+.subject-field:focus-within {
+  border-bottom-color: var(--accent);
+}
+
+.subject-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.subject-field input {
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.subject-field input::placeholder {
+  color: var(--text-muted);
+}
+
+.new-chat-spacer {
+  flex: 1;
+  min-height: 24px;
+}
+
+.new-chat-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--divider);
+}
+
+.new-chat-count {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.new-chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Shared pill buttons for the group modals. */
+.modal-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 18px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  transition: filter 120ms ease, background 120ms ease;
+}
+
+.modal-action.primary {
+  background: var(--accent);
+  color: var(--unread-badge-text);
+}
+
+.modal-action.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.modal-action.secondary {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.modal-action.secondary:hover:not(:disabled) {
+  background: var(--bg-active);
+}
+
+.modal-action.danger {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.modal-action.danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.modal-action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.modal-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.modal-error p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-secondary);
+}
+
+.group-inline-error {
+  margin: 12px 16px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(241, 92, 109, 0.12);
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Group info panel                                                    */
+/* ------------------------------------------------------------------ */
+
+.group-info-panel {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 340px;
+  min-width: 320px;
+  max-width: 360px;
+  height: 100%;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--divider);
+}
+
+.group-info-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: var(--header-height);
+  padding: 0 10px 0 22px;
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--divider);
+}
+
+.group-info-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.group-info-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 16px;
+}
+
+.group-info-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 24px 18px;
+  text-align: center;
+}
+
+.avatar.group-avatar {
+  width: 96px;
+  height: 96px;
+  font-size: 34px;
+}
+
+.group-info-subject {
+  margin: 12px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.group-info-count {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+
+.group-info-section {
+  padding: 6px 0;
+  border-top: 1px solid var(--divider);
+}
+
+.group-info-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px 6px 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.group-info-text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  color: var(--accent-strong);
+}
+
+.group-info-text-button:hover {
+  background: var(--bg-hover);
+}
+
+.group-info-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 20px;
+  font-size: 14.5px;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.group-info-row:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.group-info-row:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.group-info-row-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  color: var(--icon);
+}
+
+.group-info-row-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-info-row-value {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.group-info-row.danger .group-info-row-icon,
+.group-info-row.danger .group-info-row-label {
+  color: var(--danger);
+}
+
+.group-info-danger {
+  padding-bottom: 8px;
+}
+
+/* Participant picker (add to group) */
+
+.participant-picker {
+  margin: 6px 12px 10px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.participant-picker .modal-search {
+  margin: 8px 8px 4px;
+}
+
+.participant-picker-list {
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.participant-picker .contact-row {
+  min-height: 48px;
+  padding: 6px 12px;
+}
+
+.participant-picker-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--divider);
+}
+
+.participant-picker-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 16px;
+  text-align: center;
+}
+
+.participant-picker-error p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+/* Member list */
+
+.member-list {
+  padding: 0 0 4px;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 8px 0 20px;
+}
+
+.member-row:hover {
+  background: var(--bg-hover);
+}
+
+.member-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.member-name {
+  display: block;
+  font-size: 14.5px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.member-remove {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  opacity: 0;
+  transition: opacity 100ms ease, background 100ms ease, color 100ms ease;
+}
+
+.member-row:hover .member-remove,
+.member-row:focus-within .member-remove,
+.member-remove.busy {
+  opacity: 1;
+}
+
+.member-remove:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--danger);
+}
+
+/* Loading and error states */
+
+.group-info-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 40px 24px;
+  text-align: center;
+}
+
+.group-info-error p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-secondary);
+}
+
+.group-info-skeleton {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 24px;
+}
+
+.group-skeleton {
+  background: var(--bg-hover);
+  border-radius: var(--radius-md);
+  animation: group-pulse 1.4s ease-in-out infinite;
+}
+
+.group-skeleton-avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: var(--radius-full);
+}
+
+.group-skeleton-line {
+  width: 70%;
+  height: 14px;
+}
+
+.group-skeleton-line.short {
+  width: 40%;
+}
+
+.group-skeleton-block {
+  width: 100%;
+  height: 120px;
+  margin-top: 12px;
+}
+
+@keyframes group-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.spin {
+  animation: group-spin 0.9s linear infinite;
+}
+
+@keyframes group-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Confirm dialog                                                      */
+/* ------------------------------------------------------------------ */
+
+.confirm-backdrop {
+  z-index: 2100;
+}
+
+.confirm-dialog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(360px, calc(100vw - 48px));
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-modal);
+  box-shadow: var(--shadow-modal);
+  text-align: center;
+}
+
+.confirm-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  color: var(--accent-strong);
+}
+
+.confirm-icon.danger {
+  background: rgba(241, 92, 109, 0.14);
+  color: var(--danger);
+}
+
+.confirm-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.confirm-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-secondary);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Focus rings                                                         */
+/* ------------------------------------------------------------------ */
+
+.contact-row:focus-visible,
+.contact-chip-remove:focus-visible,
+.modal-action:focus-visible,
+.subject-field input:focus-visible,
+.group-info-row:focus-visible,
+.group-info-text-button:focus-visible,
+.member-remove:focus-visible,
+.group-info-header .icon-button:focus-visible,
+.participant-search input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
