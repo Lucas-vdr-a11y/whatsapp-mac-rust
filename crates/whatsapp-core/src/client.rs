@@ -18,13 +18,14 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{Mutex, broadcast};
 use whatsapp_rust::chrono::{DateTime, Utc};
 use whatsapp_rust::prelude::*;
+use whatsapp_rust::wacore::types::events::LazyHistorySync;
 use whatsapp_rust::wacore::types::presence::{ChatPresence, ReceiptType};
 use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::error::{CoreError, Result};
 use crate::events::{
-    ConnectionEvent, ConnectionState, CoreEvent, ErrorEvent, MessageStatusChangedEvent,
-    PairingEvent, PresenceEvent, TypingEvent,
+    ChatUpdatedEvent, ConnectionEvent, ConnectionState, CoreEvent, ErrorEvent,
+    MessageStatusChangedEvent, PairingEvent, PresenceEvent, TypingEvent,
 };
 use crate::store::Store;
 use crate::types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};
@@ -133,8 +134,10 @@ impl WaClient {
         let bus_lifecycle = bus.clone();
         let bus_messages = bus.clone();
         let bus_updates = bus.clone();
+        let bus_history = bus.clone();
         let store_messages = Arc::clone(&self.store);
         let store_updates = Arc::clone(&self.store);
+        let store_history = Arc::clone(&self.store);
 
         let bot = Bot::builder()
             .with_backend(backend)
@@ -233,6 +236,20 @@ impl WaClient {
                     }
                 },
             )
+            .on_event_for(&[EventKind::HistorySync], move |event, _client| {
+                let bus = bus_history.clone();
+                let store = Arc::clone(&store_history);
+                async move {
+                    // Decompression and parsing are CPU-bound: keep them off
+                    // the async worker threads.
+                    if let Event::HistorySync(sync) = event.as_ref() {
+                        let sync = sync.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            import_history_sync(&bus, &store, &sync);
+                        });
+                    }
+                }
+            })
             .build()
             .await
             .map_err(|error| CoreError::Protocol(error.to_string()))?;
@@ -318,7 +335,7 @@ impl WaClient {
             status: MessageStatus::Sent,
         };
 
-        self.store.upsert_message(&message)?;
+        // Chat row first: the message references it.
         self.store.record_message_activity(
             chat_id,
             &preview_for(&message),
@@ -326,6 +343,7 @@ impl WaClient {
             None,
             false,
         )?;
+        self.store.upsert_message(&message)?;
         let _ = self.events.send(CoreEvent::Message(message.clone()));
         Ok(message)
     }
@@ -512,9 +530,8 @@ fn handle_inbound_message(
     let name_hint = (!info.push_name.trim().is_empty()).then_some(info.push_name.as_str());
     let preview = preview_for(&message);
 
-    if let Err(error) = store.upsert_message(&message) {
-        tracing::warn!(%error, "failed to store inbound message");
-    }
+    // The chat row must exist before the message (foreign key), so record the
+    // activity first and only then insert the message.
     if let Err(error) = store.record_message_activity(
         &message.chat_id,
         &preview,
@@ -523,6 +540,9 @@ fn handle_inbound_message(
         !message.from_me,
     ) {
         tracing::warn!(%error, "failed to update chat activity");
+    }
+    if let Err(error) = store.upsert_message(&message) {
+        tracing::warn!(%error, "failed to store inbound message");
     }
 
     let _ = bus.send(CoreEvent::Message(message));
@@ -564,6 +584,133 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
         }
         _ => {}
     }
+}
+
+/// Import a history-sync blob: conversations and their messages.
+///
+/// Runs on a blocking thread (the caller uses `spawn_blocking`); the stream
+/// yields conversations lazily so memory stays bounded even for large blobs.
+fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: &LazyHistorySync) {
+    let mut stream = sync.stream();
+    let mut chat_count = 0usize;
+    let mut message_count = 0usize;
+
+    loop {
+        match stream.next_conversation() {
+            Ok(Some(conversation)) => {
+                let chat_id = Jid::new(conversation.id.clone());
+                if chat_id.as_str().is_empty() {
+                    continue;
+                }
+
+                let history_name = conversation.name.clone().unwrap_or_default();
+                let name = if history_name.trim().is_empty() {
+                    chat_id.user().to_owned()
+                } else {
+                    history_name
+                };
+
+                let summary = ChatSummary {
+                    id: chat_id.clone(),
+                    name,
+                    last_message_preview: None,
+                    last_activity_ts: conversation.last_msg_timestamp.unwrap_or(0) / 1_000,
+                    unread_count: conversation.unread_count.unwrap_or(0),
+                    muted: false,
+                    pinned: false,
+                    is_group: chat_id.is_group(),
+                    is_archived: conversation.archived.unwrap_or(false),
+                };
+                if let Err(error) = store.upsert_chat(&summary) {
+                    tracing::warn!(%error, chat = %chat_id, "history: chat upsert failed");
+                    continue;
+                }
+                chat_count += 1;
+
+                let mut newest: Option<Message> = None;
+                for entry in &conversation.messages {
+                    let Some(info) = entry.message.as_option() else {
+                        continue;
+                    };
+                    let Some(message) = convert_history_message(info) else {
+                        continue;
+                    };
+                    if let Err(error) = store.upsert_message(&message) {
+                        tracing::warn!(%error, "history: message upsert failed");
+                        continue;
+                    }
+                    message_count += 1;
+                    if newest
+                        .as_ref()
+                        .is_none_or(|current| message.timestamp >= current.timestamp)
+                    {
+                        newest = Some(message);
+                    }
+                }
+
+                if let Some(newest) = newest {
+                    let _ = store.record_message_activity(
+                        &chat_id,
+                        &preview_for(&newest),
+                        newest.timestamp,
+                        None,
+                        false,
+                    );
+                }
+
+                let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+            }
+            Ok(None) => break,
+            Err(error) => {
+                tracing::warn!(%error, "history: stream failed");
+                break;
+            }
+        }
+    }
+
+    tracing::info!(
+        chats = chat_count,
+        messages = message_count,
+        "history sync imported"
+    );
+}
+
+/// Convert one history-sync message into our domain type.
+fn convert_history_message(info: &wa::WebMessageInfo) -> Option<Message> {
+    let key = info.key.as_option()?;
+    let id = key.id.clone().unwrap_or_default();
+    let chat = key.remote_jid.clone().unwrap_or_default();
+    if id.is_empty() || chat.is_empty() {
+        return None;
+    }
+
+    let chat_id = Jid::new(chat);
+    let from_me = key.from_me.unwrap_or(false);
+    let sender = key
+        .participant
+        .clone()
+        .map(Jid::new)
+        .unwrap_or_else(|| chat_id.clone());
+    let body = info.message.as_option();
+
+    Some(Message {
+        id,
+        chat_id,
+        sender_id: if from_me {
+            Jid::new(ME_PLACEHOLDER)
+        } else {
+            sender
+        },
+        from_me,
+        timestamp: info.message_timestamp.unwrap_or(0) / 1_000,
+        kind: body.map(classify).unwrap_or(MessageKind::Unsupported),
+        text: body.and_then(|message| message.text_content().map(str::to_owned)),
+        status: if from_me {
+            MessageStatus::Sent
+        } else {
+            MessageStatus::Delivered
+        },
+    })
 }
 
 fn receipt_status(receipt: &ReceiptType) -> Option<MessageStatus> {
@@ -706,5 +853,37 @@ mod tests {
             ..sample_message()
         };
         assert_eq!(preview_for(&long).chars().count(), 120);
+    }
+
+    #[test]
+    fn converts_history_messages_from_the_sync_blob() {
+        let info = wa::WebMessageInfo {
+            key: MessageField::some(wa::MessageKey {
+                remote_jid: Some("alice@s.whatsapp.net".to_owned()),
+                from_me: Some(false),
+                id: Some("abc123".to_owned()),
+                participant: None,
+            }),
+            message: MessageField::some(wa::Message {
+                conversation: Some("hi from history".to_owned()),
+                ..Default::default()
+            }),
+            message_timestamp: Some(1_700_000_000_000),
+            ..Default::default()
+        };
+
+        let message = convert_history_message(&info).expect("converts");
+        assert_eq!(message.id, "abc123");
+        assert_eq!(message.chat_id.as_str(), "alice@s.whatsapp.net");
+        assert_eq!(message.timestamp, 1_700_000_000);
+        assert_eq!(message.kind, MessageKind::Text);
+        assert_eq!(message.text.as_deref(), Some("hi from history"));
+        assert!(!message.from_me);
+    }
+
+    #[test]
+    fn skips_history_messages_without_key_or_chat() {
+        let info = wa::WebMessageInfo::default();
+        assert!(convert_history_message(&info).is_none());
     }
 }

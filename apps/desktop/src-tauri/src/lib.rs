@@ -4,6 +4,11 @@
 //! integrations and marshals commands / events between the webview and
 //! `whatsapp-core`. All business logic lives in the core crate.
 
+mod commands_actions;
+mod commands_calls;
+mod commands_channels;
+mod commands_groups;
+mod commands_media;
 mod events;
 mod menu;
 mod platform;
@@ -212,6 +217,25 @@ pub fn run() {
             set_chat_archived,
             mark_chat_read,
             set_typing,
+            commands_actions::actions_send_quoting,
+            commands_actions::actions_react,
+            commands_actions::actions_edit,
+            commands_actions::actions_revoke,
+            commands_actions::actions_star,
+            commands_media::media_download,
+            commands_media::media_send_file,
+            commands_groups::groups_create,
+            commands_groups::groups_info,
+            commands_groups::groups_add,
+            commands_groups::groups_remove,
+            commands_groups::groups_leave,
+            commands_groups::groups_invite_link,
+            commands_channels::channels_follow,
+            commands_channels::channels_unfollow,
+            commands_channels::channels_send,
+            commands_channels::channels_post_status,
+            commands_calls::calls_start,
+            commands_calls::calls_end,
             platform::notify,
             platform::notification_permission,
             platform::set_badge,
