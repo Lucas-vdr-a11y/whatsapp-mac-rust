@@ -861,6 +861,87 @@ impl Store {
         Ok(renamed > 0)
     }
 
+    /// Contacts that carry a real name but have no chat row yet.
+    ///
+    /// Backfill selector (audit S4): when history sync never imports a
+    /// conversation, an active direct chat would stay invisible even though
+    /// the address book knows the person. Only contacts with a non-empty
+    /// `name` qualify; `push_name`-only rows are left to the live-message
+    /// path so a stale push name never becomes a chat.
+    pub fn contacts_missing_chats(&self, limit: u32) -> Result<Vec<(Jid, String)>> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT c.id, c.name FROM contacts c
+                 WHERE COALESCE(c.name, '') != ''
+                   AND NOT EXISTS (SELECT 1 FROM chats WHERE chats.id = c.id)
+                 ORDER BY c.rowid DESC
+                 LIMIT ?1",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![limit], |row| {
+                Ok((Jid::new(row.get::<_, String>(0)?), row.get::<_, String>(1)?))
+            })
+            .map_err(storage_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(storage_error)
+    }
+
+    /// Insert the minimal chat row for a named contact when it does not exist
+    /// yet: name from the address book (`name_source = 'contact'`), the
+    /// group flag computed from the (canonical) JID, no activity yet.
+    /// Existing rows — including deferred placeholder rows — are never
+    /// touched; naming them is `apply_contact_name`'s job. Returns `true`
+    /// when a row was inserted.
+    pub fn upsert_chat_from_contact(&self, jid: &Jid, name: &str) -> Result<bool> {
+        let chat_id = self.canonical_jid(jid)?;
+        let connection = self.lock()?;
+        let inserted = connection
+            .execute(
+                "INSERT INTO chats (
+                     id, name, name_source, last_activity_ts, unread_count, is_group
+                 ) VALUES (?1, ?2, 'contact', 0, 0, ?3)
+                 ON CONFLICT(id) DO NOTHING",
+                params![chat_id.as_str(), name, i64::from(chat_id.is_group())],
+            )
+            .map_err(storage_error)?;
+        Ok(inserted > 0)
+    }
+
+    /// Apply a sender's push name (live `PushNameUpdate`): store it on the
+    /// contact and rename the direct chat row only when its current name came
+    /// from a push name or is still a placeholder. Contact names (`contact`)
+    /// and group subjects (`subject`) are stronger and stay. Returns `true`
+    /// when the chat row changed.
+    pub fn apply_push_name(&self, jid: &Jid, name: &str) -> Result<bool> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(false);
+        }
+        let canonical = self.canonical_jid(jid)?;
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO contacts (id, push_name) VALUES (?1, ?2)
+                 ON CONFLICT(id) DO UPDATE SET push_name = excluded.push_name",
+                params![jid.as_str(), name],
+            )
+            .map_err(storage_error)?;
+        let renamed = connection
+            .execute(
+                "UPDATE chats
+                 SET name = ?2, name_source = 'pushname'
+                 WHERE (id = ?1 OR id = ?3)
+                   AND is_group = 0
+                   AND name_source IN ('pushname', 'placeholder', '')
+                   AND name != ?2",
+                params![jid.as_str(), name, canonical.as_str()],
+            )
+            .map_err(storage_error)?;
+        Ok(renamed > 0)
+    }
+
     /// The chat id that `jid` should be stored under. Identity aliases
     /// (phone-number ↔ LID) collapse onto one row so history and live
     /// messages land in the same conversation.
@@ -1254,6 +1335,56 @@ impl Store {
             .execute("DELETE FROM messages WHERE id = ?1", params![message_id])
             .map_err(storage_error)?;
         Ok(())
+    }
+
+    /// Clear every message of a chat (ClearChatUpdate), keeping the chat row
+    /// so it stays in the list with an empty preview. Reactions, media
+    /// records and buffered reactions for the removed messages cascade away.
+    /// Returns `true` when the chat existed.
+    pub fn clear_chat(&self, chat_id: &Jid) -> Result<bool> {
+        let chat_id = self.canonical_jid(chat_id)?;
+        let connection = self.lock()?;
+        if !chat_row_exists(&connection, chat_id.as_str())? {
+            return Ok(false);
+        }
+        connection
+            .execute(
+                "DELETE FROM messages WHERE chat_id = ?1",
+                params![chat_id.as_str()],
+            )
+            .map_err(storage_error)?;
+        connection
+            .execute(
+                "UPDATE chats
+                 SET last_message_preview = NULL, unread_count = 0,
+                     last_kind = NULL, last_from_me = 0
+                 WHERE id = ?1",
+                params![chat_id.as_str()],
+            )
+            .map_err(storage_error)?;
+        Ok(true)
+    }
+
+    /// Delete a chat and all of its messages (DeleteChatUpdate). Returns
+    /// `true` when a chat row was removed.
+    pub fn delete_chat(&self, chat_id: &Jid) -> Result<bool> {
+        let chat_id = self.canonical_jid(chat_id)?;
+        let connection = self.lock()?;
+        // Buffered reactions have no foreign key into chats; remove them
+        // explicitly so they cannot resurrect the chat through a drain.
+        connection
+            .execute(
+                "DELETE FROM pending_reactions WHERE chat_id = ?1",
+                params![chat_id.as_str()],
+            )
+            .map_err(storage_error)?;
+        let deleted = connection
+            .execute(
+                "DELETE FROM chats WHERE id = ?1",
+                params![chat_id.as_str()],
+            )
+            .map_err(storage_error)?;
+        Ok(deleted > 0)
     }
 
     /// Mark a message as starred (or clear it).

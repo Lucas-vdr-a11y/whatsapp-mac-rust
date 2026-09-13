@@ -23,6 +23,10 @@ pub enum CoreEvent {
     MessageStatusChanged(MessageStatusChangedEvent),
     /// A chat was created or its metadata changed.
     ChatUpdated(ChatUpdatedEvent),
+    /// A chat was deleted on a linked device; the UI must drop it from the
+    /// list. (Clearing a chat's messages emits [`CoreEvent::ChatUpdated`]
+    /// instead: the row survives.)
+    ChatRemoved(ChatRemovedEvent),
     /// Typing indicator.
     Typing(TypingEvent),
     /// Online/offline presence of a contact.
@@ -146,6 +150,14 @@ pub struct MessageStatusChangedEvent {
 #[serde(rename_all = "camelCase")]
 pub struct ChatUpdatedEvent {
     /// Chat that changed.
+    pub chat_id: Jid,
+}
+
+/// Payload of [`CoreEvent::ChatRemoved`].
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatRemovedEvent {
+    /// Chat that was deleted.
     pub chat_id: Jid,
 }
 

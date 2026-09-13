@@ -25,9 +25,9 @@ use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::error::{CoreError, Result};
 use crate::events::{
-    ChatUpdatedEvent, ConnectionEvent, ConnectionState, CoreEvent, ErrorEvent, MessageEditedEvent,
-    MessageRevokedEvent, MessageStatusChangedEvent, PairingEvent, PresenceEvent, ReactionEvent,
-    TypingEvent,
+    ChatRemovedEvent, ChatUpdatedEvent, ConnectionEvent, ConnectionState, CoreEvent, ErrorEvent,
+    MessageEditedEvent, MessageRevokedEvent, MessageStatusChangedEvent, PairingEvent, PresenceEvent,
+    ReactionEvent, TypingEvent,
 };
 use crate::media::MediaStore as _;
 use crate::store::Store;
@@ -47,10 +47,13 @@ const CONTACT_NAME_PASS_CAP: u32 = 1000;
 /// history-sync burst collapses into a single pass instead of hammering
 /// usync/group-metadata per event.
 const NAME_PASS_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(30);
-/// Pause between the first history import and the full app-state replay, so
-/// the store has finished writing the imported chat rows before the
-/// chat-list patches land on them.
-const FULL_SYNC_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+/// Pause between connecting and the full app-state replay, so the connection
+/// (and the incremental chat-list sync that runs first) has settled before
+/// the full `regular` snapshot re-downloads every patch.
+const FULL_SYNC_DELAY: std::time::Duration = std::time::Duration::from_secs(10);
+/// Pause between connecting and the contact → chat backfill, so the address
+/// book and any history import have landed in the store first.
+const CONTACT_BACKFILL_DELAY: std::time::Duration = std::time::Duration::from_secs(12);
 
 /// Wake-up handle for the event-driven name-resolution passes (audit S6).
 ///
@@ -76,20 +79,19 @@ impl NamePassTrigger {
 ///
 /// Incremental app-state syncs never re-deliver chat-list patches another
 /// device already acked, which is why archive/mute/pin flags were missing.
-/// Once per session — after the first history-sync import — the `regular`
-/// collection is re-fetched as a full snapshot, replaying every patch.
+/// Once per session — shortly after connect, independent of history sync
+/// (which after initial pairing never runs again) — the `regular` collection
+/// is re-fetched as a full snapshot, replaying every patch.
 #[derive(Clone, Default)]
 struct FullSyncGate {
     fired: Arc<AtomicBool>,
-    notify: Arc<tokio::sync::Notify>,
 }
 
 impl FullSyncGate {
-    /// Request the replay; only the first request per session is honored.
-    fn request_once(&self) {
-        if !self.fired.swap(true, Ordering::SeqCst) {
-            self.notify.notify_one();
-        }
+    /// Claim the replay slot. Returns `true` only for the first caller per
+    /// session, so reconnects don't repeat the snapshot download.
+    fn fire(&self) -> bool {
+        !self.fired.swap(true, Ordering::SeqCst)
     }
 }
 
@@ -255,7 +257,6 @@ impl WaClient {
         let name_trigger_messages = name_trigger.clone();
         let name_trigger_updates = name_trigger.clone();
         let name_trigger_history = name_trigger.clone();
-        let full_sync_history = self.full_sync.clone();
         // The call event slot exists in every build; only the `calls`
         // feature compiles the manager that consumes it.
         #[cfg(feature = "calls")]
@@ -365,6 +366,19 @@ impl WaClient {
                     EventKind::MuteUpdate,
                     EventKind::PinUpdate,
                     EventKind::MarkChatAsReadUpdate,
+                    // Chat and message lifecycle patches the phone pushes
+                    // (audit S8): deletes, clears, delete-for-me, push names.
+                    EventKind::DeleteChatUpdate,
+                    EventKind::ClearChatUpdate,
+                    EventKind::DeleteMessageForMeUpdate,
+                    EventKind::PushNameUpdate,
+                    // Group notifications (subject changes, membership).
+                    EventKind::GroupUpdate,
+                    // Undecryptable payloads still occupy a timeline slot.
+                    EventKind::UndecryptableMessage,
+                    // Profile-picture changes and server dirty markers.
+                    EventKind::PictureUpdate,
+                    EventKind::DirtyState,
                 ],
                 move |event, _client| {
                     let bus = bus_updates.clone();
@@ -379,7 +393,6 @@ impl WaClient {
                 let bus = bus_history.clone();
                 let store = Arc::clone(&store_history);
                 let trigger = name_trigger_history.clone();
-                let full_sync = full_sync_history.clone();
                 async move {
                     // Decompression and parsing are CPU-bound: keep them off
                     // the async worker threads.
@@ -389,11 +402,10 @@ impl WaClient {
                         // blocking task, which is what we want here.
                         drop(tokio::task::spawn_blocking(move || {
                             import_history_sync(&bus, &store, &sync, &trigger);
-                            // The first import of a session means the chat
-                            // rows exist; replay the chat-list app state from
-                            // a full snapshot once so archive/mute/pin/read
-                            // patches the phone acked long ago are applied.
-                            full_sync.request_once();
+                            // The import may have skipped conversations that
+                            // history sync never sent; named contacts whose
+                            // chat row is still missing get one now.
+                            backfill_chats_from_contacts(&store, &bus);
                         }));
                     }
                 }
@@ -518,28 +530,51 @@ impl WaClient {
         // Replay the chat-list app state from a full snapshot once per
         // session (audit S1). Incremental syncs never re-deliver patches the
         // phone already acked, which left archive/mute/pin/read flags behind.
-        // The replay waits for the first history-sync import so the chat rows
-        // it patches exist (A1's deferred writes included), then runs once.
+        // This used to wait for the first history-sync import, but after
+        // initial pairing history sync never runs again — so the snapshot is
+        // now requested on a timer after connect (verified against upstream
+        // 0.7.0: consumers kick `MajorSyncTask::AppStateSync { full_sync:
+        // true }` themselves; the sync worker serializes it per collection).
         {
             let client = Arc::downgrade(&bot.client());
             let gate = self.full_sync.clone();
             let trigger = name_trigger.clone();
+            let store = Arc::clone(&self.store);
+            let bus = self.events.clone();
             tokio::spawn(async move {
-                gate.notify.notified().await;
+                if !gate.fire() {
+                    return;
+                }
+                tokio::time::sleep(FULL_SYNC_DELAY).await;
                 let Some(client) = client.upgrade() else {
                     return;
                 };
-                tokio::time::sleep(FULL_SYNC_DELAY).await;
                 client
                     .process_sync_task(whatsapp_rust::sync_task::MajorSyncTask::AppStateSync {
                         name: whatsapp_rust::wacore::appstate::patch_decode::WAPatchName::Regular,
                         full_sync: true,
                     })
                     .await;
-                tracing::info!("full regular app-state replay finished");
+                tracing::info!("full regular app-state snapshot finished");
                 // The snapshot can surface chats that were deferred or still
                 // unnamed; give the name passes a shot.
                 trigger.request();
+                // And it can reveal chats that never existed locally at all.
+                backfill_chats_from_contacts(&store, &bus);
+            });
+        }
+
+        // Backfill chat rows for named contacts that history sync never
+        // imported (audit S4): active direct chats were invisible because
+        // their conversation was missing from every history blob. Runs after
+        // connect and after every history import (see the HistorySync
+        // handler).
+        {
+            let store = Arc::clone(&self.store);
+            let bus = self.events.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(CONTACT_BACKFILL_DELAY).await;
+                backfill_chats_from_contacts(&store, &bus);
             });
         }
 
@@ -786,6 +821,34 @@ impl WaClient {
             )
             .await
             .map_err(|error| CoreError::Protocol(error.to_string()))?;
+        Ok(true)
+    }
+
+    /// Backfill a chat's history from the primary phone via PDO
+    /// (HISTORY_SYNC_ON_DEMAND).
+    ///
+    /// For chats with stored messages this anchors on the oldest one (see
+    /// [`WaClient::fetch_older_history`]). For chats with *no* messages at
+    /// all — the ones history sync never imported (audit S4) — it sends an
+    /// empty anchor (`oldest_msg_id = ""`, timestamp 0): upstream passes the
+    /// anchor through verbatim and the phone answers with the newest page of
+    /// the conversation. The answer flows back as a self-addressed
+    /// history-sync notification (upstream `receive.rs` handles it in
+    /// `handle_history_sync`), so it lands in the regular history import and
+    /// needs no extra wiring here. Returns `false` when nothing was
+    /// requested (not connected).
+    pub async fn backfill_chat_history(&self, chat_id: &Jid, count: u32) -> Result<bool> {
+        if self.store.oldest_message(chat_id)?.is_some() {
+            return self.fetch_older_history(chat_id, count).await;
+        }
+
+        let client = self.client().await?;
+        let jid = to_upstream_jid(chat_id)?;
+        client
+            .fetch_message_history(&jid, "", false, 0, count as i32)
+            .await
+            .map_err(|error| CoreError::Protocol(error.to_string()))?;
+        tracing::info!(chat = %chat_id, count, "requested on-demand history backfill");
         Ok(true)
     }
 
@@ -1428,6 +1491,158 @@ fn handle_update_event(
                 }
             }
         }
+        Event::DeleteChatUpdate(update) => {
+            let chat_id = from_upstream_jid(&update.jid);
+            let chat_id = store.canonical_jid(&chat_id).unwrap_or(chat_id);
+            match store.delete_chat(&chat_id) {
+                Ok(true) => {
+                    let _ = bus.send(CoreEvent::ChatRemoved(ChatRemovedEvent {
+                        chat_id: chat_id.clone(),
+                    }));
+                }
+                Ok(false) => {}
+                Err(error) => tracing::warn!(%error, "failed to delete chat"),
+            }
+        }
+        Event::ClearChatUpdate(update) => {
+            let chat_id = from_upstream_jid(&update.jid);
+            let chat_id = store.canonical_jid(&chat_id).unwrap_or(chat_id);
+            match store.clear_chat(&chat_id) {
+                Ok(true) => {
+                    let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+                }
+                Ok(false) => {}
+                Err(error) => tracing::warn!(%error, "failed to clear chat"),
+            }
+        }
+        Event::DeleteMessageForMeUpdate(update) => {
+            let chat_id = from_upstream_jid(&update.chat_jid);
+            let chat_id = store.canonical_jid(&chat_id).unwrap_or(chat_id);
+            if let Err(error) = store.delete_message(&update.message_id) {
+                tracing::warn!(%error, "failed to delete message for me");
+            }
+            // The chat-list preview may have pointed at the removed message;
+            // recompute it from what is left (or blank it when the chat is
+            // now empty).
+            match store.list_messages(&chat_id, 1) {
+                Ok(messages) => {
+                    if let Some(newest) = messages.first() {
+                        let _ = store.record_message_activity(
+                            &chat_id,
+                            &preview_for(newest),
+                            newest.timestamp,
+                            None,
+                            false,
+                        );
+                    } else {
+                        let _ = store.clear_chat(&chat_id);
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "failed to refresh chat preview"),
+            }
+            let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+        }
+        Event::PushNameUpdate(update) => {
+            // A push name is only a valid display name for direct chats, and
+            // only when nothing better (contact name, subject) is known.
+            let jid = from_upstream_jid(&update.jid);
+            match store.apply_push_name(&jid, &update.new_push_name) {
+                Ok(true) => {
+                    let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id: jid }));
+                }
+                Ok(false) => {}
+                Err(error) => tracing::warn!(%error, contact = %jid, "failed to store push name"),
+            }
+        }
+        Event::GroupUpdate(update) => {
+            let chat_id = from_upstream_jid(&update.group_jid);
+            let chat_id = store.canonical_jid(&chat_id).unwrap_or(chat_id);
+            if let whatsapp_rust::wacore::stanza::groups::GroupNotificationAction::Subject {
+                subject,
+                ..
+            } = &update.action
+            {
+                let subject = subject.trim();
+                if !subject.is_empty() {
+                    match store.rename_chat(&chat_id, subject) {
+                        Ok(true) => {
+                            let _ =
+                                bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+                        }
+                        Ok(false) => {}
+                        Err(error) => {
+                            tracing::warn!(%error, "failed to store group subject")
+                        }
+                    }
+                }
+            }
+            // Participant and setting changes carry no stored state of their
+            // own yet; a join/leave shows up when its system notice message
+            // arrives through the regular message path. Nothing to crash on.
+        }
+        Event::UndecryptableMessage(update) => {
+            // The payload will never render, but it occupies a slot in the
+            // timeline and the unread count; storing a placeholder keeps the
+            // list honest instead of silently swallowing the message.
+            let info = &update.info;
+            let chat_id = store
+                .canonical_jid(&from_upstream_jid(&info.source.chat))
+                .unwrap_or_else(|_| from_upstream_jid(&info.source.chat));
+            let message = Message {
+                id: info.id.to_string(),
+                chat_id: chat_id.clone(),
+                sender_id: from_upstream_jid(&info.source.sender),
+                from_me: info.source.is_from_me,
+                timestamp: timestamp_to_unix(&info.timestamp),
+                kind: MessageKind::Unsupported,
+                text: None,
+                status: if info.source.is_from_me {
+                    MessageStatus::Sent
+                } else {
+                    MessageStatus::Delivered
+                },
+                view_once: false,
+            };
+            let known = matches!(store.find_message(&message.id), Ok(Some(_)));
+            if !known
+                && let Err(error) = store.upsert_message(&message)
+            {
+                tracing::warn!(%error, "failed to store undecryptable placeholder");
+            }
+            if let Err(error) = store.record_message_activity(
+                &chat_id,
+                &preview_for(&message),
+                message.timestamp,
+                None,
+                !message.from_me,
+            ) {
+                tracing::warn!(%error, "failed to update chat activity for placeholder");
+            }
+            if !known {
+                let _ = bus.send(CoreEvent::Message(message));
+            }
+            let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+        }
+        Event::PictureUpdate(update) => {
+            // The event only carries the JID and the server picture id — no
+            // URL or path — so there is nothing to persist beyond a log line.
+            // Avatar fetching stays on-demand via `avatar_url`.
+            tracing::debug!(
+                jid = %update.jid,
+                removed = update.removed,
+                picture_id = update.picture_id.as_deref().unwrap_or(""),
+                "picture update received"
+            );
+        }
+        Event::DirtyState(update) => {
+            // The upstream client performs its own clean/resync work; the
+            // missing-flag repair here rides on the periodic full `regular`
+            // snapshot instead.
+            tracing::warn!(
+                dirty_type = ?update.dirty_type,
+                "server reported dirty app state; relying on the full regular snapshot to repair"
+            );
+        }
         _ => {}
     }
 }
@@ -1624,6 +1839,39 @@ fn import_history_sync(
     // The import may have created placeholder rows; the name passes pick
     // them up on the next debounced run.
     trigger.request();
+}
+
+/// Create minimal chat rows for named contacts that have none (audit S4).
+///
+/// History sync never re-runs after the initial pairing, so conversations
+/// missing from its blobs stay invisible even when the address book knows
+/// them. This inserts a `name_source = 'contact'` row per affected contact
+/// and tells the UI so the list refreshes; existing rows are never touched.
+fn backfill_chats_from_contacts(store: &Store, bus: &broadcast::Sender<CoreEvent>) {
+    let candidates = match store.contacts_missing_chats(CONTACT_NAME_PASS_CAP) {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            tracing::warn!(%error, "contact backfill: listing contacts failed");
+            return;
+        }
+    };
+    if candidates.is_empty() {
+        return;
+    }
+    let mut created = 0usize;
+    for (jid, name) in candidates {
+        match store.upsert_chat_from_contact(&jid, &name) {
+            Ok(true) => {
+                created += 1;
+                let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id: jid }));
+            }
+            Ok(false) => {}
+            Err(error) => tracing::warn!(%error, chat = %jid, "contact backfill: insert failed"),
+        }
+    }
+    if created > 0 {
+        tracing::info!(created, "contact backfill created missing chat rows");
+    }
 }
 
 /// WhatsApp history timestamps are usually milliseconds, but some server
