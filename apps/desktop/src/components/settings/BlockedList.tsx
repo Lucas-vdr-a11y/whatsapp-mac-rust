@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useTranslation } from "../../lib/i18n";
 import {
   blockContact,
   normalizeJid,
@@ -15,6 +16,7 @@ import {
  * session-local state only. Unblocking always goes through `privacy_unblock`.
  */
 export function BlockedList() {
+  const { t } = useTranslation();
   const [entries, setEntries] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -27,14 +29,12 @@ export function BlockedList() {
     const jid = normalizeJid(input);
     if (!jid) {
       setNotice(null);
-      setError(
-        "Enter a phone number or a JID like 15551234567@s.whatsapp.net.",
-      );
+      setError(t("blocked.invalid"));
       return;
     }
     if (entries.includes(jid)) {
       setError(null);
-      setNotice(`${jid} is already in this session's list.`);
+      setNotice(t("blocked.already", { jid }));
       return;
     }
 
@@ -45,7 +45,7 @@ export function BlockedList() {
       .then(() => {
         setEntries((list) => [...list, jid]);
         setInput("");
-        setNotice(`${jid} blocked.`);
+        setNotice(t("blocked.blocked", { jid }));
       })
       .catch((cause: unknown) => setError(privacyErrorMessage(cause)))
       .finally(() => setBusy(false));
@@ -58,7 +58,7 @@ export function BlockedList() {
     void unblockContact(jid)
       .then(() => {
         setEntries((list) => list.filter((entry) => entry !== jid));
-        setNotice(`${jid} unblocked.`);
+        setNotice(t("blocked.unblocked", { jid }));
       })
       .catch((cause: unknown) => setError(privacyErrorMessage(cause)))
       .finally(() => setUnblocking(null));
@@ -66,19 +66,15 @@ export function BlockedList() {
 
   return (
     <div className="blocked-panel">
-      <p className="blocked-note">
-        This build can't read your existing blocklist yet — the core has no
-        command for it. Contacts you block here are listed for this session
-        only.
-      </p>
+      <p className="blocked-note">{t("blocked.note")}</p>
 
       <form className="blocked-add" onSubmit={submit}>
         <input
           className="blocked-input"
           type="text"
           value={input}
-          placeholder="Phone number or JID"
-          aria-label="Phone number or JID to block"
+          placeholder={t("blocked.placeholder")}
+          aria-label={t("blocked.inputAria")}
           spellCheck={false}
           disabled={busy}
           onChange={(event) => setInput(event.target.value)}
@@ -88,7 +84,7 @@ export function BlockedList() {
           className="settings-button danger"
           disabled={busy || input.trim().length === 0}
         >
-          {busy ? "Blocking…" : "Block"}
+          {busy ? t("blocked.blocking") : t("blocked.block")}
         </button>
       </form>
 
@@ -113,13 +109,13 @@ export function BlockedList() {
                 disabled={unblocking !== null}
                 onClick={() => unblock(jid)}
               >
-                {unblocking === jid ? "Unblocking…" : "Unblock"}
+                {unblocking === jid ? t("blocked.unblocking") : t("blocked.unblock")}
               </button>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="blocked-empty">No contacts blocked in this session.</p>
+        <p className="blocked-empty">{t("blocked.empty")}</p>
       )}
     </div>
   );

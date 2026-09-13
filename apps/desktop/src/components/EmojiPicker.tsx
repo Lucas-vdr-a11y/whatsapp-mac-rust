@@ -17,6 +17,7 @@ import {
   Smile,
   Users,
 } from "lucide-react";
+import { useTranslation } from "../lib/i18n";
 
 type CategoryIcon = ComponentType<{
   size?: number | string;
@@ -25,14 +26,14 @@ type CategoryIcon = ComponentType<{
 }>;
 
 const EMOJI_CATEGORIES = [
-  { id: "smileys", label: "Smileys", icon: Smile as CategoryIcon },
-  { id: "people", label: "People", icon: Users as CategoryIcon },
-  { id: "nature", label: "Nature", icon: Leaf as CategoryIcon },
-  { id: "food", label: "Food", icon: Coffee as CategoryIcon },
-  { id: "activity", label: "Activity", icon: Activity as CategoryIcon },
-  { id: "travel", label: "Travel", icon: Plane as CategoryIcon },
-  { id: "objects", label: "Objects", icon: Lightbulb as CategoryIcon },
-  { id: "symbols", label: "Symbols", icon: Hash as CategoryIcon },
+  { id: "smileys", labelKey: "emoji.smileys", icon: Smile as CategoryIcon },
+  { id: "people", labelKey: "emoji.people", icon: Users as CategoryIcon },
+  { id: "nature", labelKey: "emoji.nature", icon: Leaf as CategoryIcon },
+  { id: "food", labelKey: "emoji.food", icon: Coffee as CategoryIcon },
+  { id: "activity", labelKey: "emoji.activity", icon: Activity as CategoryIcon },
+  { id: "travel", labelKey: "emoji.travel", icon: Plane as CategoryIcon },
+  { id: "objects", labelKey: "emoji.objects", icon: Lightbulb as CategoryIcon },
+  { id: "symbols", labelKey: "emoji.symbols", icon: Hash as CategoryIcon },
 ] as const;
 
 export type EmojiCategoryId = (typeof EMOJI_CATEGORIES)[number]["id"];
@@ -78,6 +79,7 @@ export interface EmojiPickerProps {
 }
 
 export function EmojiPicker({ onPick, onClose }: EmojiPickerProps) {
+  const { t } = useTranslation();
   const [categoryId, setCategoryId] = useState<EmojiCategoryId>("smileys");
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -98,23 +100,28 @@ export function EmojiPicker({ onPick, onClose }: EmojiPickerProps) {
     EMOJI_CATEGORIES[0];
 
   return (
-    <div className="emoji-picker" role="dialog" aria-label="Emoji picker">
-      <div className="emoji-tabs" role="tablist" aria-label="Emoji categories">
+    <div className="emoji-picker" role="dialog" aria-label={t("emoji.pickerAria")}>
+      <div
+        className="emoji-tabs"
+        role="tablist"
+        aria-label={t("emoji.categoriesAria")}
+      >
         {EMOJI_CATEGORIES.map((category) => {
           const Icon = category.icon;
           const selected = category.id === categoryId;
+          const label = t(category.labelKey);
           return (
             <button
               key={category.id}
               type="button"
               role="tab"
               aria-selected={selected}
-              title={category.label}
+              title={label}
               className={`emoji-tab${selected ? " active" : ""}`}
               onClick={() => setCategoryId(category.id)}
             >
               <Icon size={20} />
-              <span className="visually-hidden">{category.label}</span>
+              <span className="visually-hidden">{label}</span>
             </button>
           );
         })}
@@ -124,7 +131,7 @@ export function EmojiPicker({ onPick, onClose }: EmojiPickerProps) {
         ref={gridRef}
         className="emoji-grid"
         role="tabpanel"
-        aria-label={active.label}
+        aria-label={t(active.labelKey)}
       >
         {EMOJIS[categoryId].map((emoji, index) => (
           <button

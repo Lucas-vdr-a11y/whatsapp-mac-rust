@@ -8,8 +8,10 @@
  * regular chat instead of creating a group.
  */
 
-import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, Search, X } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { AtSign, ChevronLeft, LoaderCircle, Search, X } from "lucide-react";
+import { businessErrorMessage, lookupUsername } from "./business/api";
+import { useTranslation } from "../lib/i18n";
 import { initials } from "../lib/names";
 import { useAppStore } from "../store/app";
 import { ContactList } from "./groups/ContactList";
@@ -23,6 +25,7 @@ interface NewChatModalProps {
 type Step = "select" | "details";
 
 export function NewChatModal({ onClose }: NewChatModalProps) {
+  const { t } = useTranslation();
   const startChat = useAppStore((state) => state.startChat);
   const {
     contacts,
@@ -38,6 +41,13 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Username lookup: resolved JIDs are added to the selectable list.
+  const [extraContacts, setExtraContacts] = useState<Contact[]>([]);
+  const [username, setUsername] = useState("");
+  const [usernameBusy, setUsernameBusy] = useState(false);
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+  const [usernameNotice, setUsernameNotice] = useState<string | null>(null);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -46,13 +56,74 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
+  const allContacts = useMemo(() => {
+    const known = new Set(contacts.map((contact) => contact.id));
+    return [
+      ...contacts,
+      ...extraContacts.filter((contact) => !known.has(contact.id)),
+    ];
+  }, [contacts, extraContacts]);
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return contacts;
-    return contacts.filter((contact) =>
+    if (!needle) return allContacts;
+    return allContacts.filter((contact) =>
       `${contact.name} ${contact.about ?? ""}`.toLowerCase().includes(needle),
     );
-  }, [contacts, query]);
+  }, [allContacts, query]);
+
+  const normalizedUsername = username.trim().replace(/^@+/, "");
+  const usernameValid = /^[A-Za-z0-9._]{3,35}$/.test(normalizedUsername);
+
+  const handleUsernameSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (usernameBusy) return;
+    setUsernameNotice(null);
+    if (!usernameValid) {
+      setUsernameError(t("newChat.usernameInvalid"));
+      return;
+    }
+
+    setUsernameBusy(true);
+    setUsernameError(null);
+    try {
+      const jid = await lookupUsername(normalizedUsername);
+      if (!jid) {
+        setUsernameError(
+          t("newChat.usernameNotFound", { name: normalizedUsername }),
+        );
+        return;
+      }
+      if (contacts.some((contact) => contact.id === jid)) {
+        setUsernameNotice(
+          t("newChat.usernameAlready", { name: normalizedUsername }),
+        );
+      } else {
+        setExtraContacts((current) =>
+          current.some((contact) => contact.id === jid)
+            ? current
+            : [
+                ...current,
+                {
+                  id: jid,
+                  name: `@${normalizedUsername}`,
+                  about: t("newChat.usernameFoundAbout"),
+                },
+              ],
+        );
+        setUsernameNotice(
+          t("newChat.usernameAdded", { name: normalizedUsername }),
+        );
+      }
+      setUsername("");
+    } catch (cause) {
+      setUsernameError(
+        businessErrorMessage(cause, t("newChat.usernameError")),
+      );
+    } finally {
+      setUsernameBusy(false);
+    }
+  };
 
   const selectedIds = useMemo(
     () => new Set(selected.map((contact) => contact.id)),
@@ -76,7 +147,9 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
   const singleContact = selected.length === 1 ? selected[0] : null;
   const trimmedSubject = subject.trim();
   const primaryLabel =
-    singleContact && !trimmedSubject ? "Start chat" : "Create group";
+    singleContact && !trimmedSubject
+      ? t("newChat.startChat")
+      : t("newChat.createGroup");
   const primaryDisabled =
     creating || selected.length === 0 || (!trimmedSubject && !singleContact);
 
@@ -105,7 +178,7 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
       // update for the created group, the parent should refetch here.
       onClose();
     } catch (cause) {
-      setFormError(friendlyError(cause, "Couldn't create the group."));
+      setFormError(friendlyError(cause, t("newChat.createError")));
     } finally {
       setCreating(false);
     }
@@ -117,18 +190,20 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
         className="new-chat-modal"
         role="dialog"
         aria-modal="true"
-        aria-label={step === "select" ? "New chat" : "New group"}
+        aria-label={
+          step === "select" ? t("newChat.title") : t("newChat.newGroup")
+        }
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="modal-header">
           <h2 className="modal-title">
-            {step === "select" ? "New chat" : "New group"}
+            {step === "select" ? t("newChat.title") : t("newChat.newGroup")}
           </h2>
           <button
             type="button"
             className="icon-button"
-            title="Close"
-            aria-label="Close"
+            title={t("common.close")}
+            aria-label={t("common.close")}
             onClick={onClose}
           >
             <X size={22} />
@@ -153,16 +228,55 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
               <Search size={18} />
               <input
                 type="text"
-                placeholder="Search name"
+                placeholder={t("newChat.searchName")}
                 value={query}
                 autoFocus
                 onChange={(event) => setQuery(event.target.value)}
               />
             </label>
 
+            <form
+              className="username-search"
+              onSubmit={(event) => void handleUsernameSubmit(event)}
+            >
+              <label className="username-search-field">
+                <AtSign size={18} />
+                <input
+                  type="text"
+                  placeholder={t("newChat.searchUsername")}
+                  value={username}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(event) => {
+                    setUsername(event.target.value);
+                    setUsernameError(null);
+                    setUsernameNotice(null);
+                  }}
+                />
+                <button
+                  type="submit"
+                  className="username-search-button"
+                  disabled={usernameBusy || normalizedUsername.length === 0}
+                >
+                  {usernameBusy ? (
+                    <LoaderCircle size={16} className="business-spin" />
+                  ) : (
+                    t("newChat.lookUp")
+                  )}
+                </button>
+              </label>
+              {usernameError ? (
+                <p className="username-search-error" role="alert">
+                  {usernameError}
+                </p>
+              ) : usernameNotice ? (
+                <p className="username-search-notice">{usernameNotice}</p>
+              ) : null}
+            </form>
+
             <div className="modal-list">
               {loading ? (
-                <p className="modal-empty">Loading contacts…</p>
+                <p className="modal-empty">{t("newChat.loadingContacts")}</p>
               ) : contactsError ? (
                 <div className="modal-error">
                   <p>{contactsError}</p>
@@ -171,7 +285,7 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
                     className="modal-action secondary"
                     onClick={reload}
                   >
-                    Retry
+                    {t("common.retry")}
                   </button>
                 </div>
               ) : (
@@ -179,7 +293,7 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
                   contacts={filtered}
                   selectedIds={selectedIds}
                   onToggle={toggleContact}
-                  emptyText="No contacts found"
+                  emptyText={t("newChat.noContacts")}
                 />
               )}
             </div>
@@ -187,8 +301,8 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
             <footer className="new-chat-footer">
               <span className="new-chat-count">
                 {selected.length === 0
-                  ? "Select contacts"
-                  : `${selected.length} selected`}
+                  ? t("newChat.selectContacts")
+                  : t("newChat.selectedCount", { count: selected.length })}
               </span>
               <div className="new-chat-actions">
                 {singleContact ? (
@@ -197,7 +311,7 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
                     className="modal-action secondary"
                     onClick={() => startSingleChat(singleContact)}
                   >
-                    Start chat
+                    {t("newChat.startChat")}
                   </button>
                 ) : null}
                 <button
@@ -209,7 +323,7 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
                     setFormError(null);
                   }}
                 >
-                  Next
+                  {t("common.next")}
                 </button>
               </div>
             </footer>
@@ -228,13 +342,15 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
               </div>
 
               <label className="subject-field">
-                <span className="subject-label">Group subject</span>
+                <span className="subject-label">
+                  {t("newChat.groupSubject")}
+                </span>
                 <input
                   type="text"
                   placeholder={
                     singleContact
-                      ? "Optional — leave empty to start a chat"
-                      : "Type a group name"
+                      ? t("newChat.subjectOptional")
+                      : t("newChat.subjectPlaceholder")
                   }
                   value={subject}
                   autoFocus
@@ -270,7 +386,7 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
                 }}
               >
                 <ChevronLeft size={16} />
-                Back
+                {t("common.back")}
               </button>
               <button
                 type="button"
@@ -278,7 +394,7 @@ export function NewChatModal({ onClose }: NewChatModalProps) {
                 disabled={primaryDisabled}
                 onClick={() => void handlePrimary()}
               >
-                {creating ? "Creating…" : primaryLabel}
+                {creating ? t("common.creating") : primaryLabel}
               </button>
             </footer>
           </>
@@ -295,6 +411,8 @@ function SelectedChip({
   contact: Contact;
   onRemove: () => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <span className="contact-chip">
       <span className="avatar tiny">{initials(contact.name)}</span>
@@ -302,7 +420,7 @@ function SelectedChip({
       <button
         type="button"
         className="contact-chip-remove"
-        aria-label={`Remove ${contact.name}`}
+        aria-label={t("newChat.removeContact", { name: contact.name })}
         onClick={onRemove}
       >
         <X size={14} />

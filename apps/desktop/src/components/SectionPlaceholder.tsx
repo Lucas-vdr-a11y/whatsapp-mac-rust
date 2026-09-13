@@ -1,23 +1,24 @@
+import { useTranslation } from "../lib/i18n";
 import type { RailSection } from "./NavigationRail";
 
-const titles: Record<Exclude<RailSection, "chats">, string> = {
-  status: "Status",
-  channels: "Channels",
-  communities: "Communities",
-  calls: "Calls",
-  starred: "Starred messages",
-  settings: "Settings",
-  profile: "Profile",
+const titleKeys: Record<Exclude<RailSection, "chats">, string> = {
+  status: "nav.status",
+  channels: "nav.channels",
+  communities: "communities.title",
+  calls: "nav.calls",
+  starred: "nav.starred",
+  settings: "nav.settings",
+  profile: "nav.profile",
 };
 
-const descriptions: Record<Exclude<RailSection, "chats">, string> = {
-  status: "Share updates that disappear after 24 hours.",
-  channels: "Follow updates from people and organizations.",
-  communities: "Bring related groups together in one place.",
-  calls: "Voice and video calls, including call history.",
-  starred: "Messages you starred, from every chat.",
-  settings: "Account, privacy, notifications and appearance.",
-  profile: "Your name, photo and about text.",
+const descriptionKeys: Record<Exclude<RailSection, "chats">, string> = {
+  status: "placeholder.status",
+  channels: "placeholder.channels",
+  communities: "placeholder.communities",
+  calls: "placeholder.calls",
+  starred: "placeholder.starred",
+  settings: "placeholder.settings",
+  profile: "placeholder.profile",
 };
 
 /** Placeholder for sections that exist in the rail but are not built yet. */
@@ -26,10 +27,12 @@ export function SectionPlaceholder({
 }: {
   section: Exclude<RailSection, "chats">;
 }) {
+  const { t } = useTranslation();
+
   return (
     <section className="chat-list">
       <header className="chat-list-header" data-tauri-drag-region>
-        <h1 className="chat-list-title">{titles[section]}</h1>
+        <h1 className="chat-list-title">{t(titleKeys[section])}</h1>
       </header>
       <div
         style={{
@@ -39,7 +42,7 @@ export function SectionPlaceholder({
           lineHeight: "20px",
         }}
       >
-        {descriptions[section]}
+        {t(descriptionKeys[section])}
         <div
           style={{
             marginTop: 16,
@@ -49,7 +52,7 @@ export function SectionPlaceholder({
             fontSize: 13,
           }}
         >
-          Not implemented yet — tracked on the roadmap.
+          {t("placeholder.notImplemented")}
         </div>
       </div>
     </section>

@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Mic, MicOff, Phone, PhoneOff, VideoOff } from "lucide-react";
 import { avatarSrc } from "../../lib/avatar";
+import { t, useTranslation } from "../../lib/i18n";
 import { initials } from "../../lib/names";
 import { useAppStore, type CallSession } from "../../store/app";
 
@@ -9,6 +10,7 @@ import { useAppStore, type CallSession } from "../../store/app";
  * so it is visible from anywhere in the app, independent of the selected chat.
  */
 export function CallOverlay() {
+  const { t } = useTranslation();
   const call = useAppStore((state) => state.callState);
   const chats = useAppStore((state) => state.chats);
   const avatars = useAppStore((state) => state.avatars);
@@ -47,27 +49,25 @@ export function CallOverlay() {
   const chat = call.chatId
     ? chats.find((candidate) => candidate.id === call.chatId)
     : undefined;
-  const name = chat?.name ?? call.chatId?.split("@")[0] ?? "Unknown contact";
+  const name =
+    chat?.name ?? call.chatId?.split("@")[0] ?? t("call.unknown");
   const avatar = call.chatId ? avatars[call.chatId] : undefined;
   const video = call.info?.video ?? false;
   const missed = call.reason === "Missed call";
-  const kind = video ? "Video call" : "Voice call";
+  const kind = video ? t("call.videoKind") : t("call.voiceKind");
 
   return (
     <div
       className="call-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label={`${kind} with ${name}`}
+      aria-label={t("call.aria", { kind, name })}
     >
       <div className={`call-card${video ? " video" : ""}`}>
         {video ? (
           <div className="call-video-tile">
             <VideoOff size={40} strokeWidth={1.5} />
-            <span className="call-video-note">
-              Video preview isn't wired up yet — this build carries the audio
-              call only.
-            </span>
+            <span className="call-video-note">{t("call.videoNote")}</span>
           </div>
         ) : (
           <div className="call-avatar">
@@ -82,7 +82,9 @@ export function CallOverlay() {
           </span>
           <span className="call-kind">
             {call.state === "ringing-in"
-              ? `Incoming ${kind.toLowerCase()}`
+              ? video
+                ? t("call.incomingVideo")
+                : t("call.incomingVoice")
               : kind}
           </span>
           {call.reason && !missed ? (
@@ -96,7 +98,7 @@ export function CallOverlay() {
           {call.state === "ringing-in" ? (
             <>
               <Control
-                label="Decline"
+                label={t("call.decline")}
                 className="hangup"
                 icon={<PhoneOff size={26} />}
                 onClick={() => {
@@ -104,7 +106,7 @@ export function CallOverlay() {
                 }}
               />
               <Control
-                label="Accept"
+                label={t("call.accept")}
                 className="accept"
                 icon={<Phone size={26} />}
                 onClick={() => {
@@ -114,7 +116,7 @@ export function CallOverlay() {
             </>
           ) : call.state === "ended" ? (
             <Control
-              label="Close"
+              label={t("call.close")}
               className="neutral"
               icon={<PhoneOff size={26} />}
               onClick={() => clearCall(call.callId)}
@@ -122,13 +124,13 @@ export function CallOverlay() {
           ) : (
             <>
               <Control
-                label={call.muted ? "Unmute" : "Mute"}
+                label={call.muted ? t("call.unmute") : t("call.mute")}
                 className={`neutral${call.muted ? " on" : ""}`}
                 icon={call.muted ? <MicOff size={26} /> : <Mic size={26} />}
                 onClick={() => setCallMuted(!call.muted)}
               />
               <Control
-                label="Hang up"
+                label={t("call.hangUp")}
                 className="hangup"
                 icon={<PhoneOff size={26} />}
                 onClick={() => {
@@ -147,15 +149,17 @@ export function CallOverlay() {
 function callHeadline(call: CallSession, duration: string): string {
   switch (call.state) {
     case "ringing-in":
-      return "Incoming call";
+      return t("call.incoming");
     case "ringing-out":
-      return "Ringing…";
+      return t("call.ringing");
     case "connecting":
-      return "Connecting…";
+      return t("call.connecting");
     case "active":
       return duration;
     case "ended":
-      return call.reason === "Missed call" ? "Missed call" : "Call ended";
+      return call.reason === "Missed call"
+        ? t("call.missed")
+        : t("call.ended");
     default:
       return "";
   }

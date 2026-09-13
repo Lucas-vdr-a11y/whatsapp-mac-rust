@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { t } from "../../lib/i18n";
 import type { Jid } from "../../lib/types";
 import {
   addLabel,
@@ -46,7 +47,7 @@ export function useLabels(): LabelsState {
       })
       .catch((cause: unknown) => {
         if (!cancelled) {
-          setError(businessErrorMessage(cause, "Couldn't load labels."));
+          setError(businessErrorMessage(cause, t("labels.loadError")));
         }
       })
       .finally(() => {
@@ -91,7 +92,7 @@ export function useLabels(): LabelsState {
       } catch (cause) {
         apply(associated);
         throw new Error(
-          businessErrorMessage(cause, "Couldn't update the label."),
+          businessErrorMessage(cause, t("labels.updateError")),
         );
       } finally {
         setPending((current) => {

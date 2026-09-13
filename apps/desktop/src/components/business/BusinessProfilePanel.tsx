@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { initials } from "../../lib/names";
+import { t, useTranslation } from "../../lib/i18n";
 import type { ChatSummary } from "../../lib/types";
 import {
   businessErrorMessage,
@@ -48,13 +49,13 @@ interface BusinessProfilePanelProps {
 const DAY_ORDER = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 const DAY_LABELS: Record<string, string> = {
-  mon: "Monday",
-  tue: "Tuesday",
-  wed: "Wednesday",
-  thu: "Thursday",
-  fri: "Friday",
-  sat: "Saturday",
-  sun: "Sunday",
+  mon: "business.day.mon",
+  tue: "business.day.tue",
+  wed: "business.day.wed",
+  thu: "business.day.thu",
+  fri: "business.day.fri",
+  sat: "business.day.sat",
+  sun: "business.day.sun",
 };
 
 function dayIndex(day: string): number {
@@ -63,7 +64,8 @@ function dayIndex(day: string): number {
 }
 
 function dayLabel(day: string): string {
-  return DAY_LABELS[day] ?? day;
+  const key = DAY_LABELS[day];
+  return key ? t(key) : day;
 }
 
 /** `480` -> `08:00`. */
@@ -80,9 +82,9 @@ function formatTime(minutes: number): string {
 function formatHours(entry: BusinessHoursEntry): string {
   switch (entry.mode) {
     case "open_24h":
-      return "Open 24 hours";
+      return t("business.open24");
     case "appointment_only":
-      return "By appointment only";
+      return t("business.byAppointment");
     case "specific_hours":
       if (entry.openTime !== null && entry.closeTime !== null) {
         return `${formatTime(entry.openTime)} – ${formatTime(entry.closeTime)}`;
@@ -113,6 +115,7 @@ export function BusinessProfilePanel({
   chat,
   onClose,
 }: BusinessProfilePanelProps) {
+  const { t: translate } = useTranslation();
   const [profile, setProfile] = useState<BusinessProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -151,7 +154,9 @@ export function BusinessProfilePanel({
       })
       .catch((cause: unknown) => {
         if (!cancelled) {
-          setError(businessErrorMessage(cause, "Couldn't load business info."));
+          setError(
+            businessErrorMessage(cause, translate("business.loadError")),
+          );
         }
       })
       .finally(() => {
@@ -175,7 +180,7 @@ export function BusinessProfilePanel({
       .catch((cause: unknown) => {
         if (!cancelled) {
           setCatalogError(
-            businessErrorMessage(cause, "Couldn't load the catalog."),
+            businessErrorMessage(cause, translate("business.catalogError")),
           );
         }
       })
@@ -197,7 +202,9 @@ export function BusinessProfilePanel({
   const handleOpen = (url: string) => {
     setActionError(null);
     void openExternal(url).catch((cause: unknown) => {
-      setActionError(businessErrorMessage(cause, "Couldn't open the link."));
+      setActionError(
+        businessErrorMessage(cause, translate("business.openLinkError")),
+      );
     });
   };
 
@@ -205,14 +212,14 @@ export function BusinessProfilePanel({
   const products = visibleProducts(catalog?.products ?? []);
 
   return (
-    <aside className="business-panel" aria-label="Business info">
+    <aside className="business-panel" aria-label={translate("business.info")}>
       <header className="business-panel-header" data-tauri-drag-region>
-        <h2 className="business-panel-title">Business info</h2>
+        <h2 className="business-panel-title">{translate("business.info")}</h2>
         <button
           type="button"
           className="icon-button no-drag"
-          title="Close"
-          aria-label="Close business info"
+          title={translate("common.close")}
+          aria-label={translate("business.closeAria")}
           onClick={onClose}
         >
           <X size={22} />
@@ -230,7 +237,7 @@ export function BusinessProfilePanel({
               className="modal-action secondary"
               onClick={() => setAttempt((value) => value + 1)}
             >
-              Try again
+              {translate("common.tryAgain")}
             </button>
           </div>
         ) : profile ? (
@@ -245,17 +252,17 @@ export function BusinessProfilePanel({
                   <BadgeCheck
                     size={18}
                     className="business-verified"
-                    aria-label="Verified business"
+                    aria-label={translate("business.verifiedAria")}
                   />
                 ) : null}
               </h3>
               {profile.verifiedName ? (
                 <p className="business-verified-label">
-                  Verified business account
+                  {translate("business.verifiedLabel")}
                 </p>
               ) : (
                 <p className="business-verified-label">
-                  No verified business name from WhatsApp
+                  {translate("business.noVerified")}
                 </p>
               )}
               {profile.about ? (
@@ -272,16 +279,15 @@ export function BusinessProfilePanel({
             {isEmptyProfile(profile) ? (
               <section className="business-empty">
                 <Info size={20} />
-                <p>
-                  WhatsApp returned no profile details for this chat. Regular
-                  accounts don&apos;t have a business profile.
-                </p>
+                <p>{translate("business.empty")}</p>
               </section>
             ) : (
               <>
                 {profile.description ? (
                   <section className="business-section">
-                    <h4 className="business-section-title">About</h4>
+                    <h4 className="business-section-title">
+                      {translate("business.about")}
+                    </h4>
                     <p className="business-description">
                       {profile.description}
                     </p>
@@ -290,7 +296,9 @@ export function BusinessProfilePanel({
 
                 {sortedHours.length > 0 || profile.businessHours?.timezone ? (
                   <section className="business-section">
-                    <h4 className="business-section-title">Business hours</h4>
+                    <h4 className="business-section-title">
+                      {translate("business.hours")}
+                    </h4>
                     {sortedHours.length > 0 ? (
                       <table className="business-hours">
                         <tbody>
@@ -306,12 +314,14 @@ export function BusinessProfilePanel({
                       </table>
                     ) : (
                       <p className="business-note">
-                        No opening hours listed.
+                        {translate("business.noHours")}
                       </p>
                     )}
                     {profile.businessHours?.timezone ? (
                       <p className="business-note">
-                        Times shown in {profile.businessHours.timezone}
+                        {translate("business.timezone", {
+                          timezone: profile.businessHours.timezone,
+                        })}
                       </p>
                     ) : null}
                   </section>
@@ -321,14 +331,16 @@ export function BusinessProfilePanel({
                 profile.email ||
                 profile.address ? (
                   <section className="business-section">
-                    <h4 className="business-section-title">Contact</h4>
+                    <h4 className="business-section-title">
+                      {translate("business.contact")}
+                    </h4>
                     <div className="business-rows">
                       {profile.website.map((site) => (
                         <button
                           key={site}
                           type="button"
                           className="business-row business-row-link"
-                          title={`Open ${site}`}
+                          title={translate("business.openSite", { site })}
                           onClick={() => handleOpen(site)}
                         >
                           <span className="business-row-icon">
@@ -367,7 +379,9 @@ export function BusinessProfilePanel({
 
                 {profile.categories.length > 0 ? (
                   <section className="business-section">
-                    <h4 className="business-section-title">Categories</h4>
+                    <h4 className="business-section-title">
+                      {translate("business.categories")}
+                    </h4>
                     <div className="business-categories">
                       {profile.categories.map((category) => (
                         <span key={category.id} className="business-category">
@@ -382,7 +396,9 @@ export function BusinessProfilePanel({
 
             <section className="business-section business-catalog">
               <header className="business-section-header">
-                <h4 className="business-section-title">Catalog</h4>
+                <h4 className="business-section-title">
+                  {translate("business.catalog")}
+                </h4>
                 {catalogOpen ? (
                   <button
                     type="button"
@@ -391,7 +407,7 @@ export function BusinessProfilePanel({
                     onClick={() => setCatalogAttempt((value) => value + 1)}
                   >
                     <RefreshCw size={14} />
-                    Refresh
+                    {translate("business.refresh")}
                   </button>
                 ) : null}
               </header>
@@ -403,12 +419,12 @@ export function BusinessProfilePanel({
                   onClick={() => setCatalogOpen(true)}
                 >
                   <Store size={16} />
-                  Show catalog
+                  {translate("business.showCatalog")}
                 </button>
               ) : catalogLoading ? (
                 <p className="business-note">
                   <LoaderCircle size={16} className="business-spin" />
-                  Loading catalog…
+                  {translate("business.loadingCatalog")}
                 </p>
               ) : catalogError ? (
                 <div className="business-catalog-error">
@@ -419,12 +435,12 @@ export function BusinessProfilePanel({
                     onClick={() => setCatalogAttempt((value) => value + 1)}
                   >
                     <RefreshCw size={14} />
-                    Try again
+                    {translate("common.tryAgain")}
                   </button>
                 </div>
               ) : products.length === 0 ? (
                 <p className="business-note">
-                  No products in this catalog.
+                  {translate("business.noProducts")}
                 </p>
               ) : (
                 <>
@@ -439,7 +455,7 @@ export function BusinessProfilePanel({
                   </div>
                   {catalog?.nextCursor ? (
                     <p className="business-note">
-                      More products exist; this build loads the first page only.
+                      {translate("business.moreProducts")}
                     </p>
                   ) : null}
                 </>
@@ -459,7 +475,8 @@ function CatalogCard({
   product: CatalogProduct;
   onOpen: (url: string) => void;
 }) {
-  const name = product.name ?? "Unnamed product";
+  const { t: translate } = useTranslation();
+  const name = product.name ?? translate("business.unnamedProduct");
   const inStock = /in stock|available/i.test(product.availability ?? "");
 
   return (
@@ -467,7 +484,11 @@ function CatalogCard({
       type="button"
       className="catalog-card"
       disabled={!product.url}
-      title={product.url ? `Open ${name}` : "This product has no link"}
+      title={
+        product.url
+          ? translate("business.openProduct", { name })
+          : translate("business.noProductLink")
+      }
       onClick={() => {
         if (product.url) onOpen(product.url);
       }}
@@ -512,7 +533,9 @@ function CatalogCard({
           </span>
         ) : null}
         {!product.url ? (
-          <span className="catalog-card-note">No product link</span>
+          <span className="catalog-card-note">
+            {translate("business.noProductLinkShort")}
+          </span>
         ) : null}
       </span>
     </button>

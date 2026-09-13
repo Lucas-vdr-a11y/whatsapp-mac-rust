@@ -14,6 +14,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Check, Search, X } from "lucide-react";
+import { useTranslation } from "../../lib/i18n";
 import { invokeCore, isTauri } from "../../lib/ipc";
 import { initials } from "../../lib/names";
 import type { Jid, Message } from "../../lib/types";
@@ -28,6 +29,7 @@ interface ForwardModalProps {
 type ForwardStatus = "idle" | "sending" | "sent" | "error";
 
 export function ForwardModal({ message, onClose }: ForwardModalProps) {
+  const { t } = useTranslation();
   const chats = useAppStore((state) => state.chats);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<Jid | null>(null);
@@ -95,16 +97,16 @@ export function ForwardModal({ message, onClose }: ForwardModalProps) {
         className="message-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Forward message"
+        aria-label={t("forward.title")}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="modal-header">
-          <h2 className="modal-title">Forward message</h2>
+          <h2 className="modal-title">{t("forward.title")}</h2>
           <button
             type="button"
             className="icon-button"
-            title="Close"
-            aria-label="Close"
+            title={t("common.close")}
+            aria-label={t("common.close")}
             disabled={status === "sending"}
             onClick={onClose}
           >
@@ -113,7 +115,9 @@ export function ForwardModal({ message, onClose }: ForwardModalProps) {
         </header>
 
         <div className="forward-preview">
-          <span className="forward-preview-label">Forwarding</span>
+          <span className="forward-preview-label">
+            {t("forward.forwarding")}
+          </span>
           <span className="forward-preview-text">
             {messagePreview(message)}
           </span>
@@ -123,7 +127,7 @@ export function ForwardModal({ message, onClose }: ForwardModalProps) {
           <Search size={18} />
           <input
             type="text"
-            placeholder="Search chats"
+            placeholder={t("forward.searchChats")}
             value={query}
             autoFocus
             disabled={status === "sent"}
@@ -136,12 +140,14 @@ export function ForwardModal({ message, onClose }: ForwardModalProps) {
             <span className="forward-confirm-icon">
               <Check size={20} />
             </span>
-            Forwarded to {target?.name ?? "chat"}
+            {t("forward.forwardedTo", {
+              name: target?.name ?? t("forward.chatFallback"),
+            })}
           </div>
         ) : (
           <div className="modal-list">
             {visible.length === 0 ? (
-              <p className="modal-empty">No chats found</p>
+              <p className="modal-empty">{t("forward.noChats")}</p>
             ) : (
               visible.map((chat) => {
                 const selected = chat.id === selectedId;
@@ -161,8 +167,8 @@ export function ForwardModal({ message, onClose }: ForwardModalProps) {
                       <span className="contact-row-name">{chat.name}</span>
                       <span className="contact-row-about">
                         {chat.isGroup
-                          ? "Group"
-                          : (chat.lastMessagePreview ?? "Chat")}
+                          ? t("forward.group")
+                          : (chat.lastMessagePreview ?? t("forward.chat"))}
                       </span>
                     </span>
                     <span
@@ -186,7 +192,9 @@ export function ForwardModal({ message, onClose }: ForwardModalProps) {
 
         <footer className="new-chat-footer">
           <span className="new-chat-count">
-            {target ? `To: ${target.name}` : "Select a chat"}
+            {target
+              ? t("forward.to", { name: target.name })
+              : t("forward.selectChat")}
           </span>
           <div className="new-chat-actions">
             <button
@@ -195,7 +203,7 @@ export function ForwardModal({ message, onClose }: ForwardModalProps) {
               disabled={status === "sending"}
               onClick={onClose}
             >
-              Cancel
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -203,7 +211,9 @@ export function ForwardModal({ message, onClose }: ForwardModalProps) {
               disabled={!selectedId || status === "sending" || status === "sent"}
               onClick={confirm}
             >
-              {status === "sending" ? "Forwarding…" : "Forward"}
+              {status === "sending"
+                ? t("forward.forwardingNow")
+                : t("forward.forward")}
             </button>
           </div>
         </footer>

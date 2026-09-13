@@ -5,13 +5,23 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { Archive, Ban, Bell, Briefcase, PinOff, Tag, Trash2 } from "lucide-react";
+import {
+  Archive,
+  Ban,
+  Bell,
+  Briefcase,
+  PinOff,
+  SquarePen,
+  Tag,
+  Trash2,
+} from "lucide-react";
 import { invokeCore, isTauri } from "../lib/ipc";
+import { t, useTranslation } from "../lib/i18n";
 import { formatListTime } from "../lib/time";
 import { avatarSrc } from "../lib/avatar";
 import { initials } from "../lib/names";
 import type { ChatSummary, Jid, Message } from "../lib/types";
-import { useAppStore, type ChatFilter } from "../store/app";
+import { useAppStore } from "../store/app";
 import { BusinessProfilePanel } from "./business/BusinessProfilePanel";
 import { LabelsMenu } from "./business/LabelsMenu";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
@@ -23,15 +33,8 @@ import {
   CheckCheck,
   EllipsisVertical,
   Pin,
-  Plus,
   Search,
 } from "./icons";
-
-const filters: { id: ChatFilter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "unread", label: "Unread" },
-  { id: "groups", label: "Groups" },
-];
 
 /** Direct chats can be blocked; groups, communities and newsletters cannot. */
 function isDirectChat(chat: ChatSummary): boolean {
@@ -42,21 +45,21 @@ function isDirectChat(chat: ChatSummary): boolean {
   );
 }
 
-/** Placeholder copy for search hits whose message carries no text body. */
-const KIND_LABELS: Record<Message["kind"], string> = {
-  text: "Message",
-  image: "Photo",
-  video: "Video",
-  audio: "Audio",
-  voiceNote: "Voice message",
-  document: "Document",
-  sticker: "Sticker",
-  gif: "GIF",
-  location: "Location",
-  contact: "Contact",
-  poll: "Poll",
-  system: "System message",
-  unsupported: "Unsupported message",
+/** Translation keys for search hits whose message carries no text body. */
+const KIND_LABEL_KEYS: Record<Message["kind"], string> = {
+  text: "media.message",
+  image: "media.photo",
+  video: "media.video",
+  audio: "media.audio",
+  voiceNote: "media.voice",
+  document: "media.document",
+  sticker: "media.sticker",
+  gif: "media.gif",
+  location: "media.location",
+  contact: "media.contact",
+  poll: "media.poll",
+  system: "media.system",
+  unsupported: "media.unsupported",
 };
 
 interface ChatListProps {
@@ -65,10 +68,34 @@ interface ChatListProps {
   onSelect: (id: Jid) => void;
 }
 
+
+/** Localized chat-list preview: media kinds render as labels, text as-is. */
+function localizedPreview(
+  chat: ChatSummary,
+  translate: (key: string) => string,
+): string {
+  const kind = chat.lastMessageKind;
+  const labels: Partial<Record<string, string>> = {
+    image: "media.photo",
+    video: "media.video",
+    voiceNote: "media.voice",
+    audio: "media.audio",
+    document: "media.document",
+    sticker: "media.sticker",
+    gif: "media.gif",
+    location: "media.location",
+    contact: "media.contact",
+    poll: "media.poll",
+  };
+  const key = kind ? labels[kind] : undefined;
+  if (key) return translate(key);
+  return chat.lastMessagePreview ?? translate("chats.noMessagesYet");
+}
+
 export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
+  const { t } = useTranslation();
   const query = useAppStore((state) => state.query);
   const setQuery = useAppStore((state) => state.setQuery);
-  const filter = useAppStore((state) => state.filter);
   const setFilter = useAppStore((state) => state.setFilter);
   const togglePinned = useAppStore((state) => state.togglePinned);
   const toggleMuted = useAppStore((state) => state.toggleMuted);
@@ -77,6 +104,10 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
   const deleteChat = useAppStore((state) => state.deleteChat);
 
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const [headerMenu, setHeaderMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -179,7 +210,10 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
     setBlockError(null);
     void blockContact(blockTarget.id)
       .then(() => {
-        setNotice({ kind: "ok", text: `${blockTarget.name} is blocked.` });
+        setNotice({
+          kind: "ok",
+          text: t("chats.blockedNotice", { name: blockTarget.name }),
+        });
         setBlockTarget(null);
       })
       .catch((cause: unknown) => setBlockError(privacyErrorMessage(cause)))
@@ -191,7 +225,7 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
     const target = menu.chat;
     blockItem.push({
       id: "block",
-      label: "Block contact",
+      label: t("chats.menu.block"),
       icon: Ban,
       danger: true,
       onSelect: () => {
@@ -207,7 +241,7 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
     const target = menu.chat;
     businessItem.push({
       id: "business",
-      label: "Business info",
+      label: t("chats.menu.businessInfo"),
       icon: Briefcase,
       onSelect: () => setBusinessChat(target),
     });
@@ -217,27 +251,29 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
     ? [
         {
           id: "pin",
-          label: menu.chat.pinned ? "Unpin chat" : "Pin chat",
+          label: menu.chat.pinned
+            ? t("chats.menu.unpin")
+            : t("chats.menu.pin"),
           icon: menu.chat.pinned ? PinOff : Pin,
           onSelect: () => togglePinned(menu.chat.id),
         },
         {
           id: "mute",
           label: menu.chat.muted
-            ? "Unmute notifications"
-            : "Mute notifications",
+            ? t("chats.menu.unmute")
+            : t("chats.menu.mute"),
           icon: menu.chat.muted ? Bell : BellOff,
           onSelect: () => toggleMuted(menu.chat.id),
         },
         {
           id: "archive",
-          label: "Archive chat",
+          label: t("chats.menu.archive"),
           icon: Archive,
           onSelect: () => archiveChat(menu.chat.id),
         },
         {
           id: "read",
-          label: "Mark as read",
+          label: t("chats.menu.markRead"),
           icon: CheckCheck,
           disabled: menu.chat.unreadCount === 0,
           onSelect: () => markRead(menu.chat.id),
@@ -245,7 +281,7 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
         ...businessItem,
         {
           id: "label",
-          label: "Label chat…",
+          label: t("chats.menu.label"),
           icon: Tag,
           onSelect: () => {
             setLabelChat({ chat: menu.chat, x: menu.x, y: menu.y });
@@ -255,7 +291,7 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
         ...blockItem,
         {
           id: "delete",
-          label: "Delete chat",
+          label: t("chats.menu.delete"),
           icon: Trash2,
           danger: true,
           onSelect: () => deleteChat(menu.chat.id),
@@ -266,18 +302,28 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
   return (
     <section className="chat-list">
       <header className="chat-list-header" data-tauri-drag-region>
-        <h1 className="chat-list-title">Chats</h1>
+        <h1 className="chat-list-title">{t("chats.title")}</h1>
         <div className="header-actions no-drag">
           <button
             type="button"
             className="icon-button"
-            title="New chat"
+            title={t("chats.newChat")}
             onClick={() => setNewChatOpen(true)}
           >
-            <Plus size={24} />
+            <SquarePen size={23} />
           </button>
-          <button type="button" className="icon-button" title="Menu">
-            <EllipsisVertical size={24} />
+          <button
+            type="button"
+            className="icon-button"
+            title={t("chats.filter")}
+            onClick={(event) =>
+              setHeaderMenu({
+                x: event.clientX,
+                y: event.clientY,
+              })
+            }
+          >
+            <EllipsisVertical size={23} />
           </button>
         </div>
       </header>
@@ -287,24 +333,11 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
           <Search size={18} />
           <input
             type="text"
-            placeholder="Search"
+            placeholder={t("chats.searchPlaceholder")}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
-      </div>
-
-      <div className="filters">
-        {filters.map((candidate) => (
-          <button
-            key={candidate.id}
-            type="button"
-            className={`filter-pill${filter === candidate.id ? " active" : ""}`}
-            onClick={() => setFilter(candidate.id)}
-          >
-            {candidate.label}
-          </button>
-        ))}
       </div>
 
       {notice ? (
@@ -335,20 +368,24 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
               textAlign: "center",
             }}
           >
-            No chats found
+            {t("chats.empty")}
           </p>
         )}
 
         {trimmedQuery.length >= 2 ? (
           <div className="search-results">
-            <p className="search-results-title">Messages</p>
+            <p className="search-results-title">
+              {t("chats.searchResultsTitle")}
+            </p>
             {searching ? (
-              <p className="search-results-note">Searching…</p>
+              <p className="search-results-note">{t("chats.searching")}</p>
             ) : searchError ? (
               <p className="search-results-error">{searchError}</p>
             ) : hits.length === 0 ? (
               hitQuery === trimmedQuery ? (
-                <p className="search-results-note">No messages found</p>
+                <p className="search-results-note">
+                  {t("chats.noMessagesFound")}
+                </p>
               ) : null
             ) : (
               hits.map((hit) => {
@@ -370,7 +407,7 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
                       {hit.text ? (
                         <HighlightedText text={hit.text} query={trimmedQuery} />
                       ) : (
-                        KIND_LABELS[hit.kind]
+                        t(KIND_LABEL_KEYS[hit.kind])
                       )}
                     </span>
                   </button>
@@ -380,6 +417,31 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
           </div>
         ) : null}
       </div>
+
+      {headerMenu && (
+        <ContextMenu
+          x={headerMenu.x}
+          y={headerMenu.y}
+          items={[
+            {
+              id: "all",
+              label: t("chats.filterAll"),
+              onSelect: () => setFilter("all"),
+            },
+            {
+              id: "unread",
+              label: t("chats.filterUnread"),
+              onSelect: () => setFilter("unread"),
+            },
+            {
+              id: "groups",
+              label: t("chats.filterGroups"),
+              onSelect: () => setFilter("groups"),
+            },
+          ]}
+          onClose={() => setHeaderMenu(null)}
+        />
+      )}
 
       {menu && (
         <ContextMenu
@@ -409,9 +471,13 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
 
       <ConfirmDialog
         open={blockTarget !== null}
-        title={blockTarget ? `Block ${blockTarget.name}?` : "Block contact?"}
-        body="Blocked contacts can't call you or send you messages. They also can't see your last seen, profile photo, or about. You can unblock them later in Settings."
-        confirmLabel="Block"
+        title={
+          blockTarget
+            ? t("chats.blockConfirmTitle", { name: blockTarget.name })
+            : t("chats.blockConfirmFallback")
+        }
+        body={t("chats.blockConfirmBody")}
+        confirmLabel={t("common.block")}
         danger
         busy={blockBusy}
         error={blockError}
@@ -453,16 +519,16 @@ function searchErrorMessage(cause: unknown): string {
         ? cause
         : "";
   if (/not connected|not linked|not paired|disconnected/i.test(raw)) {
-    return "Search is unavailable while the app isn't connected.";
+    return t("chats.searchUnavailable");
   }
   if (
     /not implemented|unknown command|command .* not found|unrecognized|not compiled/i.test(
       raw,
     )
   ) {
-    return "Message search isn't available in this build yet.";
+    return t("chats.searchUnavailableBuild");
   }
-  return raw || "Search failed. Try again.";
+  return raw || t("chats.searchFailed");
 }
 
 /** Renders `text` with the first case-insensitive match of `query` marked. */
@@ -492,7 +558,10 @@ function ChatListItem({
   onSelect,
   onContextMenu,
 }: ChatListItemProps) {
-  const isOwnLastMessage = chat.lastMessagePreview?.startsWith("You:") ?? false;
+  const { t } = useTranslation();
+  const isOwnLastMessage =
+    chat.lastFromMe ??
+    (chat.lastMessagePreview?.startsWith("You:") ?? false);
 
   return (
     <div
@@ -525,12 +594,12 @@ function ChatListItem({
               />
             )}
             <span className="preview-text">
-              {chat.lastMessagePreview ?? "No messages yet"}
+              {localizedPreview(chat, t)}
             </span>
           </span>
           <span className="chat-item-icons">
-            {chat.muted && <BellOff size={16} />}
-            {chat.pinned && <Pin size={16} />}
+            {chat.muted && <BellOff size={16} aria-label={t("chats.muted")} />}
+            {chat.pinned && <Pin size={16} aria-label={t("chats.pinned")} />}
             {chat.unreadCount > 0 && (
               <span className="chat-item-badge">{chat.unreadCount}</span>
             )}

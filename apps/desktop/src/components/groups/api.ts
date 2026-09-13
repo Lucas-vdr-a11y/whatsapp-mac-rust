@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { t } from "../../lib/i18n";
 import { invokeCore, isTauri } from "../../lib/ipc";
 import type { ChatSummary, Jid } from "../../lib/types";
 import { useAppStore } from "../../store/app";
@@ -58,7 +59,7 @@ export function friendlyError(error: unknown, fallback: string): string {
         : "";
   if (!raw) return fallback;
   if (/not implemented|unknown command|command .* not found|unrecognized/i.test(raw)) {
-    return "Group features aren't available in this build yet.";
+    return t("groups.featuresUnavailable");
   }
   return raw;
 }
@@ -79,7 +80,7 @@ export async function copyToClipboard(text: string): Promise<void> {
   field.select();
   const copied = document.execCommand("copy");
   document.body.removeChild(field);
-  if (!copied) throw new Error("Could not copy to the clipboard");
+  if (!copied) throw new Error(t("groups.copyFailed"));
 }
 
 /** Loads direct-chat contacts: `list_chats` in Tauri, demo data elsewhere. */
@@ -119,7 +120,7 @@ export function useContacts(): ContactsState {
       })
       .catch((cause: unknown) => {
         if (!cancelled) {
-          setError(friendlyError(cause, "Couldn't load contacts."));
+          setError(friendlyError(cause, t("groups.loadContactsError")));
         }
       })
       .finally(() => {
@@ -172,7 +173,7 @@ export async function fetchGroupInfo(chatId: Jid): Promise<GroupInfo> {
 
   return {
     id: chatId,
-    subject: chat?.name ?? "Group",
+    subject: chat?.name ?? t("groups.title"),
     participants,
     participantCount: participants.length,
   };

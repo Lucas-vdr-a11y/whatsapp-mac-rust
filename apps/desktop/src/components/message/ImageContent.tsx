@@ -19,6 +19,7 @@ import {
   RotateCw,
 } from "lucide-react";
 import { avatarSrc } from "../../lib/avatar";
+import { useTranslation } from "../../lib/i18n";
 import type { Message } from "../../lib/types";
 import { useAppStore } from "../../store/app";
 import { Lightbox } from "./Lightbox";
@@ -37,6 +38,7 @@ interface ImageContentProps {
 }
 
 export function ImageContent({ message, sticker = false }: ImageContentProps) {
+  const { t } = useTranslation();
   const path = useAppStore((state) => state.mediaPaths[message.id]);
   const downloadMedia = useAppStore((state) => state.downloadMedia);
   const [state, setState] = useState<LoadState>("idle");
@@ -98,14 +100,14 @@ export function ImageContent({ message, sticker = false }: ImageContentProps) {
       <>
         <div
           className={`view-once-card viewed${sticker ? " sticker" : ""}`}
-          aria-label="View-once photo, already opened"
+          aria-label={t("media.viewOncePhotoOpened")}
         >
           <span className="view-once-badge" aria-hidden="true">
             1
           </span>
           <span className="view-once-state">
             <EyeOff size={22} />
-            <span>Opened</span>
+            <span>{t("media.opened")}</span>
           </span>
         </div>
         {caption}
@@ -122,7 +124,11 @@ export function ImageContent({ message, sticker = false }: ImageContentProps) {
           className={`view-once-card${sticker ? " sticker" : ""}${
             state === "error" ? " error" : ""
           }`}
-          title={state === "error" ? "Retry download" : "Tap to view once"}
+          title={
+            state === "error"
+              ? t("media.retryDownload")
+              : t("media.tapToViewOnce")
+          }
           onClick={state === "loading" ? undefined : revealOnce}
         >
           {path ? (
@@ -147,13 +153,13 @@ export function ImageContent({ message, sticker = false }: ImageContentProps) {
             )}
             <span>
               {state === "loading"
-                ? "Downloading…"
+                ? t("media.downloading")
                 : state === "error"
-                  ? "Download failed — tap to retry"
-                  : "Tap to view once"}
+                  ? t("media.downloadFailed")
+                  : t("media.tapToViewOnce")}
             </span>
             {state === "idle" && autoDownloadOff ? (
-              <span className="media-hint">Auto-download is off</span>
+              <span className="media-hint">{t("media.autoDownloadOff")}</span>
             ) : null}
           </span>
         </button>
@@ -169,7 +175,7 @@ export function ImageContent({ message, sticker = false }: ImageContentProps) {
         <button
           type="button"
           className={`media-card${sticker ? " sticker" : ""}`}
-          title="Open"
+          title={t("media.open")}
           onClick={() => setOpen(true)}
         >
           <img
@@ -191,7 +197,9 @@ export function ImageContent({ message, sticker = false }: ImageContentProps) {
         className={`media-placeholder${sticker ? " sticker" : ""}${
           state === "error" ? " error" : ""
         }`}
-        title={state === "error" ? "Retry download" : "Download"}
+        title={
+          state === "error" ? t("media.retryDownload") : t("media.download")
+        }
         onClick={state === "loading" ? undefined : download}
       >
         {state === "loading" ? (
@@ -205,15 +213,15 @@ export function ImageContent({ message, sticker = false }: ImageContentProps) {
         )}
         <span>
           {state === "loading"
-            ? "Downloading…"
+            ? t("media.downloading")
             : state === "error"
-              ? "Download failed — tap to retry"
+              ? t("media.downloadFailed")
               : sticker
-                ? "Sticker"
-                : "Photo"}
+                ? t("media.sticker")
+                : t("media.photo")}
         </span>
         {state === "idle" && autoDownloadOff ? (
-          <span className="media-hint">Auto-download is off</span>
+          <span className="media-hint">{t("media.autoDownloadOff")}</span>
         ) : null}
       </button>
       {caption}

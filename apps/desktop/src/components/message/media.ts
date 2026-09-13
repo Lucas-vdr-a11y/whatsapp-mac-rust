@@ -1,5 +1,6 @@
 /** Shared helpers for media bubbles and message previews. */
 
+import { t } from "../../lib/i18n";
 import type { Message, MessageKind } from "../../lib/types";
 
 /** Deterministic hash in [0, 1) from a string and a salt. */
@@ -46,7 +47,7 @@ export function formatDuration(seconds: number): string {
 
 /** One-line preview used for reply bars and quoted context. */
 export function messagePreview(message: Message, deleted = false): string {
-  if (deleted) return "This message was deleted";
+  if (deleted) return t("message.deleted");
   const text = message.text?.trim();
   if (text) return text;
   return mediaLabel(message.kind);
@@ -116,30 +117,30 @@ function writeStorage(key: string, value: string): void {
 export function mediaLabel(kind: MessageKind): string {
   switch (kind) {
     case "image":
-      return "Photo";
+      return t("media.photo");
     case "video":
-      return "Video";
+      return t("media.video");
     case "voiceNote":
-      return "Voice message";
+      return t("media.voice");
     case "audio":
-      return "Audio";
+      return t("media.audio");
     case "document":
-      return "Document";
+      return t("media.document");
     case "sticker":
-      return "Sticker";
+      return t("media.sticker");
     case "gif":
-      return "GIF";
+      return t("media.gif");
     case "location":
-      return "Location";
+      return t("media.location");
     case "contact":
-      return "Contact";
+      return t("media.contact");
     case "poll":
-      return "Poll";
+      return t("media.poll");
     case "system":
-      return "System message";
+      return t("media.system");
     case "unsupported":
-      return "Unsupported message";
+      return t("media.unsupported");
     default:
-      return "Message";
+      return t("media.message");
   }
 }

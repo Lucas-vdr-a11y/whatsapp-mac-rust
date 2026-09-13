@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, Mic, Pause, Play, RotateCw } from "lucide-react";
 import { avatarSrc } from "../../lib/avatar";
+import { useTranslation } from "../../lib/i18n";
 import type { Message } from "../../lib/types";
 import { useAppStore } from "../../store/app";
 import { formatDuration, waveformBars } from "./media";
@@ -14,6 +15,7 @@ import { formatDuration, waveformBars } from "./media";
 type LoadState = "idle" | "loading" | "error";
 
 export function VoiceNoteContent({ message }: { message: Message }) {
+  const { t } = useTranslation();
   const path = useAppStore((state) => state.mediaPaths[message.id]);
   const downloadMedia = useAppStore((state) => state.downloadMedia);
   const [state, setState] = useState<LoadState>("idle");
@@ -56,7 +58,11 @@ export function VoiceNoteContent({ message }: { message: Message }) {
         type="button"
         className={`voice-play${state === "error" ? " error" : ""}`}
         title={
-          state === "error" ? "Retry download" : playing ? "Pause" : "Play"
+          state === "error"
+            ? t("media.retryDownload")
+            : playing
+              ? t("media.pause")
+              : t("media.play")
         }
         onClick={toggle}
       >
@@ -83,7 +89,7 @@ export function VoiceNoteContent({ message }: { message: Message }) {
         </div>
         <span className={`voice-duration${state === "error" ? " error" : ""}`}>
           {state === "error"
-            ? "retry"
+            ? t("media.retryShort")
             : duration !== null
               ? formatDuration(duration)
               : "--:--"}

@@ -7,6 +7,7 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { useTranslation } from "../../lib/i18n";
 
 interface LightboxProps {
   kind: "image" | "video";
@@ -16,6 +17,8 @@ interface LightboxProps {
 }
 
 export function Lightbox({ kind, src, caption, onClose }: LightboxProps) {
+  const { t } = useTranslation();
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -32,13 +35,15 @@ export function Lightbox({ kind, src, caption, onClose }: LightboxProps) {
       className="lightbox"
       role="dialog"
       aria-modal="true"
-      aria-label={kind === "video" ? "Video preview" : "Image preview"}
+      aria-label={
+        kind === "video" ? t("media.videoPreview") : t("media.imagePreview")
+      }
       onClick={onClose}
     >
       <button
         type="button"
         className="lightbox-close"
-        aria-label="Close"
+        aria-label={t("common.close")}
         onClick={onClose}
       >
         <X size={26} />

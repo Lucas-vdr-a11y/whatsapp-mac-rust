@@ -8,15 +8,16 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Clock, Trash } from "lucide-react";
+import { useTranslation } from "../../lib/i18n";
 
 /** WhatsApp's quick-reaction set. */
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 /** The pin durations the core accepts (`message_pin { days }`). */
-const PIN_DURATIONS: { days: number; label: string }[] = [
-  { days: 1, label: "24 hours" },
-  { days: 7, label: "7 days" },
-  { days: 30, label: "30 days" },
+const PIN_DURATIONS: { days: number; labelKey: string }[] = [
+  { days: 1, labelKey: "message.pin24h" },
+  { days: 7, labelKey: "message.pin7d" },
+  { days: 30, labelKey: "message.pin30d" },
 ];
 
 const VIEWPORT_MARGIN = 8;
@@ -44,6 +45,7 @@ export function MessagePopover({
   onDelete,
   onPin,
 }: MessagePopoverProps) {
+  const { t } = useTranslation();
   const ref = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ x, y });
   const [measured, setMeasured] = useState(false);
@@ -104,13 +106,13 @@ export function MessagePopover({
       }}
     >
       {kind === "react" ? (
-        <div className="react-row" role="group" aria-label="React">
+        <div className="react-row" role="group" aria-label={t("message.reactGroupAria")}>
           {QUICK_REACTIONS.map((emoji) => (
             <button
               key={emoji}
               type="button"
               className="react-emoji"
-              title={`React with ${emoji}`}
+              title={t("message.reactWith", { emoji })}
               onClick={() => {
                 onPickEmoji(emoji);
                 onClose();
@@ -121,9 +123,13 @@ export function MessagePopover({
           ))}
         </div>
       ) : kind === "pin" ? (
-        <div className="pin-popover" role="group" aria-label="Pin duration">
-          <span className="pin-popover-title">Pin for</span>
-          {PIN_DURATIONS.map(({ days, label }) => (
+        <div
+          className="pin-popover"
+          role="group"
+          aria-label={t("message.pinDurationAria")}
+        >
+          <span className="pin-popover-title">{t("message.pinFor")}</span>
+          {PIN_DURATIONS.map(({ days, labelKey }) => (
             <button
               key={days}
               type="button"
@@ -137,7 +143,7 @@ export function MessagePopover({
               <span className="context-menu-icon">
                 <Clock size={18} />
               </span>
-              <span className="context-menu-label">{label}</span>
+              <span className="context-menu-label">{t(labelKey)}</span>
             </button>
           ))}
         </div>
@@ -156,7 +162,9 @@ export function MessagePopover({
               <span className="context-menu-icon">
                 <Trash size={18} />
               </span>
-              <span className="context-menu-label">Delete for everyone</span>
+              <span className="context-menu-label">
+                {t("message.deleteForEveryone")}
+              </span>
             </button>
           ) : null}
           <button
@@ -171,7 +179,9 @@ export function MessagePopover({
             <span className="context-menu-icon">
               <Trash size={18} />
             </span>
-            <span className="context-menu-label">Delete for me</span>
+            <span className="context-menu-label">
+              {t("message.deleteForMe")}
+            </span>
           </button>
         </>
       )}

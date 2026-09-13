@@ -13,6 +13,7 @@ import {
   UserMinus,
 } from "lucide-react";
 import { invokeCore, isTauri } from "../../lib/ipc";
+import { t, useTranslation } from "../../lib/i18n";
 import { initials } from "../../lib/names";
 import { formatListTime } from "../../lib/time";
 import type { ChatSummary, Jid } from "../../lib/types";
@@ -89,7 +90,7 @@ function chatToChannel(chat: ChatSummary): Channel {
     id: chat.id,
     name: chat.name,
     followers: null,
-    preview: chat.lastMessagePreview ?? "No updates yet",
+    preview: chat.lastMessagePreview ?? t("channels.noUpdates"),
     at: chat.lastActivityTs > 0 ? formatListTime(chat.lastActivityTs) : "",
   };
 }
@@ -108,15 +109,16 @@ function friendlyError(error: unknown, fallback: string): string {
       raw,
     )
   ) {
-    return "Channels needs a linked WhatsApp session. Link your phone in Settings, then try again.";
+    return t("channels.needsSession");
   }
   if (/not implemented|unknown command|unrecognized/i.test(raw)) {
-    return "Channels aren't available in this build yet.";
+    return t("channels.unavailable");
   }
   return raw;
 }
 
 export function ChannelsScreen() {
+  const { t } = useTranslation();
   const [channels, setChannels] = useState<Channel[]>(() =>
     isTauri() ? [] : FOLLOWED_CHANNELS,
   );
@@ -151,7 +153,7 @@ export function ChannelsScreen() {
           .map(chatToChannel),
       );
     } catch (error) {
-      setListError(friendlyError(error, "Couldn't load your channels."));
+      setListError(friendlyError(error, t("channels.loadError")));
     } finally {
       setLoading(false);
     }
@@ -169,9 +171,7 @@ export function ChannelsScreen() {
   const handleFollow = async () => {
     const inviteUrl = normalizeInvite(invite);
     if (!inviteUrl) {
-      setFollowError(
-        "That doesn't look like a channel invite. Paste a whatsapp.com/channel/… link or its invite code.",
-      );
+      setFollowError(t("channels.invalidInvite"));
       return;
     }
 
@@ -189,18 +189,18 @@ export function ChannelsScreen() {
             : [
                 {
                   id,
-                  name: "Demo channel",
+                  name: t("channels.demoChannel"),
                   followers: null,
-                  preview: "Followed from an invite link (browser preview)",
-                  at: "Just now",
+                  preview: t("channels.followedRowPreview"),
+                  at: t("channels.justNow"),
                 },
                 ...current,
               ],
         );
-        setNotice("Channel followed (browser preview).");
+        setNotice(t("channels.followedPreview"));
       } else {
         const jid = await invokeCore<Jid>("channels_follow", { inviteUrl });
-        setNotice("Channel followed.");
+        setNotice(t("channels.followed"));
         await loadChannels();
         // `list_chats` can lag behind the follow; keep the row visible.
         setChannels((current) =>
@@ -209,10 +209,10 @@ export function ChannelsScreen() {
             : [
                 {
                   id: jid,
-                  name: "New channel",
+                  name: t("channels.newChannel"),
                   followers: null,
-                  preview: "Followed — updates will appear here",
-                  at: "Just now",
+                  preview: t("channels.newChannelPreview"),
+                  at: t("channels.justNow"),
                 },
                 ...current,
               ],
@@ -221,7 +221,7 @@ export function ChannelsScreen() {
       setInvite("");
       setFindOpen(false);
     } catch (error) {
-      setFollowError(friendlyError(error, "Couldn't follow that channel."));
+      setFollowError(friendlyError(error, t("channels.followError")));
     } finally {
       setFollowing(false);
     }
@@ -240,10 +240,12 @@ export function ChannelsScreen() {
       setChannels((current) =>
         current.filter((channel) => channel.id !== pendingUnfollow.id),
       );
-      setNotice(`Unfollowed ${pendingUnfollow.name}.`);
+      setNotice(t("channels.unfollowed", { name: pendingUnfollow.name }));
       setPendingUnfollow(null);
     } catch (error) {
-      setUnfollowError(friendlyError(error, "Couldn't unfollow this channel."));
+      setUnfollowError(
+        friendlyError(error, t("channels.unfollowError")),
+      );
     } finally {
       setUnfollowing(false);
     }
@@ -253,7 +255,7 @@ export function ChannelsScreen() {
     ? [
         {
           id: "unfollow",
-          label: "Unfollow channel",
+          label: t("channels.unfollow"),
           icon: UserMinus,
           danger: true,
           onSelect: () => {
@@ -266,11 +268,11 @@ export function ChannelsScreen() {
 
   return (
     <section className="chat-list screen">
-      <ScreenHeader title="Channels">
+      <ScreenHeader title={t("channels.title")}>
         <button
           type="button"
           className="icon-button"
-          title="Find channels"
+          title={t("channels.find")}
           aria-expanded={findOpen}
           onClick={toggleFind}
         >
@@ -279,10 +281,7 @@ export function ChannelsScreen() {
       </ScreenHeader>
 
       <div className="screen-body">
-        <p className="channels-lede">
-          Stay updated on topics you care about. Channels are a one-way
-          broadcast from people and organizations you follow.
-        </p>
+        <p className="channels-lede">{t("channels.lede")}</p>
 
         <button
           type="button"
@@ -294,11 +293,11 @@ export function ChannelsScreen() {
             <Compass size={22} />
           </span>
           <span className="screen-entry-body">
-            <span className="screen-entry-title">Find channels</span>
+            <span className="screen-entry-title">{t("channels.find")}</span>
             <span className="screen-entry-hint">
               {findOpen
-                ? "Paste an invite link or code below"
-                : "Follow a channel by its invite link"}
+                ? t("channels.findHintOpen")
+                : t("channels.findHintClosed")}
             </span>
           </span>
         </button>
@@ -317,7 +316,7 @@ export function ChannelsScreen() {
                 type="text"
                 inputMode="url"
                 placeholder="https://whatsapp.com/channel/…"
-                aria-label="Channel invite link"
+                aria-label={t("channels.inviteAria")}
                 value={invite}
                 autoFocus
                 spellCheck={false}
@@ -335,7 +334,7 @@ export function ChannelsScreen() {
                 className="modal-action primary"
                 disabled={following || invite.trim().length === 0}
               >
-                {following ? "Following…" : "Follow"}
+                {following ? t("channels.following") : t("channels.follow")}
               </button>
             </div>
             {followError ? (
@@ -360,20 +359,22 @@ export function ChannelsScreen() {
               className="modal-action secondary"
               onClick={() => void loadChannels()}
             >
-              Retry
+              {t("common.retry")}
             </button>
           </div>
         ) : null}
 
-        <div className="screen-section-label">Followed channels</div>
+        <div className="screen-section-label">
+          {t("channels.followedChannels")}
+        </div>
 
         {loading && channels.length === 0 ? (
-          <p className="screen-loading">Loading channels…</p>
+          <p className="screen-loading">{t("channels.loading")}</p>
         ) : channels.length === 0 && !listError ? (
           <EmptyState
             icon={<RadioTower size={26} strokeWidth={1.5} />}
-            title="No followed channels yet"
-            hint="Follow a channel with its invite link and its updates will show up here."
+            title={t("channels.emptyTitle")}
+            hint={t("channels.emptyHint")}
           />
         ) : (
           channels.map((channel) => (
@@ -409,8 +410,8 @@ export function ChannelsScreen() {
               <button
                 type="button"
                 className="icon-button channel-item-menu"
-                title={`More options for ${channel.name}`}
-                aria-label={`More options for ${channel.name}`}
+                title={t("channels.moreOptions", { name: channel.name })}
+                aria-label={t("channels.moreOptions", { name: channel.name })}
                 onClick={(event) => {
                   const rect = event.currentTarget.getBoundingClientRect();
                   setMenu({ x: rect.right, y: rect.bottom + 4, channel });
@@ -434,13 +435,13 @@ export function ChannelsScreen() {
 
       <ConfirmDialog
         open={pendingUnfollow !== null}
-        title="Unfollow channel?"
+        title={t("channels.unfollowTitle")}
         body={
           pendingUnfollow
-            ? `You will stop receiving updates from ${pendingUnfollow.name}. You can follow again later with an invite link.`
+            ? t("channels.unfollowBody", { name: pendingUnfollow.name })
             : ""
         }
-        confirmLabel="Unfollow"
+        confirmLabel={t("channels.unfollowConfirm")}
         danger
         busy={unfollowing}
         error={unfollowError}

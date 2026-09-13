@@ -13,6 +13,7 @@
 
 import { useState } from "react";
 import { CircleCheck, LoaderCircle } from "lucide-react";
+import { useTranslation } from "../../lib/i18n";
 import { invokeCore, isTauri } from "../../lib/ipc";
 import type { Message } from "../../lib/types";
 import {
@@ -22,6 +23,7 @@ import {
 } from "./messageLocalState";
 
 export function PollContent({ message }: { message: Message }) {
+  const { t } = useTranslation();
   const options = usePollOptions(message.id);
   const vote = useLocalPollVote(message.id);
   const [selected, setSelected] = useState<string | null>(
@@ -30,7 +32,7 @@ export function PollContent({ message }: { message: Message }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const question = message.text?.trim() || "Poll";
+  const question = message.text?.trim() || t("poll.fallbackQuestion");
   const voted = vote.length > 0;
   // Nothing to send while the selection matches the recorded vote.
   const canVote =
@@ -92,10 +94,10 @@ export function PollContent({ message }: { message: Message }) {
             {voted ? (
               <span className="poll-voted-note">
                 <CircleCheck size={14} />
-                You voted
+                {t("poll.voted")}
               </span>
             ) : (
-              <span className="poll-hint">Select one option</span>
+              <span className="poll-hint">{t("poll.selectOne")}</span>
             )}
             <button
               type="button"
@@ -106,7 +108,7 @@ export function PollContent({ message }: { message: Message }) {
               {pending ? (
                 <LoaderCircle size={14} className="spin" />
               ) : null}
-              {voted ? "Change vote" : "Vote"}
+              {voted ? t("poll.changeVote") : t("poll.vote")}
             </button>
           </div>
 
@@ -117,9 +119,7 @@ export function PollContent({ message }: { message: Message }) {
           ) : null}
         </>
       ) : (
-        <p className="poll-note">
-          Poll options aren&apos;t available on this device yet.
-        </p>
+        <p className="poll-note">{t("poll.optionsUnavailable")}</p>
       )}
     </div>
   );

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Star } from "lucide-react";
+import { useTranslation } from "../../lib/i18n";
 import { invokeCore, isTauri } from "../../lib/ipc";
 import { formatListTime } from "../../lib/time";
 import type { Message } from "../../lib/types";
@@ -13,6 +14,7 @@ interface StarredRow extends Message {
 }
 
 export function StarredScreen() {
+  const { t } = useTranslation();
   const chats = useAppStore((state) => state.chats);
   const selectChat = useAppStore((state) => state.selectChat);
   const [rows, setRows] = useState<StarredRow[] | null>(null);
@@ -47,18 +49,20 @@ export function StarredScreen() {
   return (
     <section className="chat-list screen">
       <header className="chat-list-header" data-tauri-drag-region>
-        <span className="chat-list-title">Starred messages</span>
+        <span className="chat-list-title">{t("starred.title")}</span>
         <Star size={20} aria-hidden />
       </header>
 
       <div className="screen-body">
         {error && <p className="screen-inline-error">{error}</p>}
-        {rows === null && !error && <p className="screen-loading">Loading…</p>}
+        {rows === null && !error && (
+          <p className="screen-loading">{t("common.loading")}</p>
+        )}
         {rows !== null && rows.length === 0 && (
           <EmptyState
             icon={<Star size={40} />}
-            title="No starred messages"
-            hint="Star a message from its context menu and it will show up here."
+            title={t("starred.emptyTitle")}
+            hint={t("starred.emptyHint")}
           />
         )}
         {rows?.map((row) => (
@@ -71,7 +75,7 @@ export function StarredScreen() {
             <div className="starred-body">
               <span className="starred-chat">{row.chatName}</span>
               <span className="starred-text">
-                {row.text ?? "[Media]"}
+                {row.text ?? t("starred.mediaPlaceholder")}
               </span>
             </div>
             <span className="starred-time">

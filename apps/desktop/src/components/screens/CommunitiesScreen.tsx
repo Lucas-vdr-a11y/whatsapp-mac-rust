@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { invokeCore, isTauri } from "../../lib/ipc";
+import { t, useTranslation } from "../../lib/i18n";
 import { initials } from "../../lib/names";
 import type { ChatSummary, Jid } from "../../lib/types";
 import { copyToClipboard } from "../groups/api";
@@ -120,15 +121,16 @@ function friendlyError(error: unknown, fallback: string): string {
       raw,
     )
   ) {
-    return "Communities need a linked WhatsApp session. Link your phone in Settings, then try again.";
+    return t("communities.needsSession");
   }
   if (/not implemented|unknown command|unrecognized/i.test(raw)) {
-    return "Communities aren't available in this build yet.";
+    return t("communities.unavailable");
   }
   return raw;
 }
 
 export function CommunitiesScreen() {
+  const { t } = useTranslation();
   const tauri = isTauri();
 
   const [communities, setCommunities] = useState<SessionCommunity[]>(() =>
@@ -205,7 +207,7 @@ export function CommunitiesScreen() {
     } catch (error) {
       setInfoErrors((current) => ({
         ...current,
-        [id]: friendlyError(error, "Couldn't load the community details."),
+        [id]: friendlyError(error, t("communities.loadError")),
       }));
     } finally {
       setInfoLoading((current) => ({ ...current, [id]: false }));
@@ -325,10 +327,10 @@ export function CommunitiesScreen() {
       // still true until the finally block below runs.
       setCreateOpen(false);
       setCreateError(null);
-      setNotice(`Created “${trimmedName}”.`);
+      setNotice(t("communities.created", { name: trimmedName }));
       if (isTauri()) void loadInfo(id);
     } catch (error) {
-      setCreateError(friendlyError(error, "Couldn't create the community."));
+      setCreateError(friendlyError(error, t("communities.createError")));
     } finally {
       setCreating(false);
     }
@@ -351,19 +353,19 @@ export function CommunitiesScreen() {
       }
 
       if (communities.some((entry) => entry.id === id)) {
-        setNotice("You are already in that community.");
+        setNotice(t("communities.alreadyJoined"));
       } else {
         setCommunities((current) => [
-          { id, name: "Joined community", description: null },
+          { id, name: t("communities.joinedName"), description: null },
           ...current,
         ]);
-        setNotice("Joined the community. Details will load from the server.");
+        setNotice(t("communities.joined"));
         if (isTauri()) void loadInfo(id);
       }
       setInvite("");
       setJoinOpen(false);
     } catch (error) {
-      setJoinError(friendlyError(error, "Couldn't join that community."));
+      setJoinError(friendlyError(error, t("communities.joinError")));
     } finally {
       setJoining(false);
     }
@@ -388,7 +390,7 @@ export function CommunitiesScreen() {
     } catch (error) {
       setActionError(
         community.id,
-        friendlyError(error, "Couldn't fetch the invite link."),
+        friendlyError(error, t("communities.inviteError")),
       );
     } finally {
       setBusyId(null);
@@ -403,10 +405,7 @@ export function CommunitiesScreen() {
         setCopiedId((current) => (current === community.id ? null : current));
       }, 1600);
     } catch {
-      setActionError(
-        community.id,
-        "Couldn't copy the link. Select it and copy manually.",
-      );
+      setActionError(community.id, t("communities.copyError"));
     }
   };
 
@@ -453,11 +452,11 @@ export function CommunitiesScreen() {
         delete next[community.id];
         return next;
       });
-      setNotice("Group linked.");
+      setNotice(t("communities.groupLinked"));
     } catch (error) {
       setActionError(
         community.id,
-        friendlyError(error, "Couldn't link that group."),
+        friendlyError(error, t("communities.linkGroupError")),
       );
     } finally {
       setBusyId(null);
@@ -493,11 +492,11 @@ export function CommunitiesScreen() {
           };
         });
       }
-      setNotice(`Unlinked ${group.name || group.id}.`);
+      setNotice(t("communities.unlinked", { name: group.name || group.id }));
     } catch (error) {
       setActionError(
         community.id,
-        friendlyError(error, "Couldn't unlink that group."),
+        friendlyError(error, t("communities.unlinkGroupError")),
       );
     } finally {
       setBusyId(null);
@@ -517,11 +516,11 @@ export function CommunitiesScreen() {
       setCommunities((current) =>
         current.filter((entry) => entry.id !== deactivating.id),
       );
-      setNotice(`Deactivated “${deactivating.name}”.`);
+      setNotice(t("communities.deactivated", { name: deactivating.name }));
       setDeactivating(null);
     } catch (error) {
       setDeactivateError(
-        friendlyError(error, "Couldn't deactivate the community."),
+        friendlyError(error, t("communities.deactivateError")),
       );
     } finally {
       setDeactivateBusy(false);
@@ -539,12 +538,12 @@ export function CommunitiesScreen() {
 
   return (
     <section className="chat-list screen">
-      <ScreenHeader title="Communities">
+      <ScreenHeader title={t("communities.title")}>
         <button
           type="button"
           className="icon-button"
-          title="New community"
-          aria-label="New community"
+          title={t("communities.new")}
+          aria-label={t("communities.new")}
           onClick={openCreate}
         >
           <Plus size={24} />
@@ -552,10 +551,7 @@ export function CommunitiesScreen() {
       </ScreenHeader>
 
       <div className="screen-body">
-        <p className="community-lede">
-          Communities bring related groups together under one roof. Create one,
-          then link the groups that belong to it.
-        </p>
+        <p className="community-lede">{t("communities.lede")}</p>
 
         <button
           type="button"
@@ -567,11 +563,13 @@ export function CommunitiesScreen() {
             <Link2 size={22} />
           </span>
           <span className="screen-entry-body">
-            <span className="screen-entry-title">Join a community</span>
+            <span className="screen-entry-title">
+              {t("communities.join")}
+            </span>
             <span className="screen-entry-hint">
               {joinOpen
-                ? "Paste the invite link below"
-                : "Use an invite link from a community admin"}
+                ? t("communities.joinHintOpen")
+                : t("communities.joinHintClosed")}
             </span>
           </span>
         </button>
@@ -589,7 +587,7 @@ export function CommunitiesScreen() {
               type="text"
               inputMode="url"
               placeholder="https://chat.whatsapp.com/…"
-              aria-label="Community invite link"
+              aria-label={t("communities.inviteAria")}
               value={invite}
               autoFocus
               spellCheck={false}
@@ -607,7 +605,7 @@ export function CommunitiesScreen() {
               className="modal-action primary"
               disabled={joining || invite.trim().length === 0}
             >
-              {joining ? "Joining…" : "Join"}
+              {joining ? t("communities.joining") : t("communities.joinButton")}
             </button>
             {joinError ? (
               <p className="community-inline-error" role="alert">
@@ -626,22 +624,17 @@ export function CommunitiesScreen() {
         {tauri ? (
           <p className="community-note" role="note">
             <Info size={14} aria-hidden="true" />
-            <span>
-              Communities created or joined here are kept for this session.
-              Communities that already exist on your phone are not listed yet:
-              the core cannot tell a community parent apart from a regular
-              group in the chat list.
-            </span>
+            <span>{t("communities.note")}</span>
           </p>
         ) : null}
 
-        <div className="screen-section-label">Your communities</div>
+        <div className="screen-section-label">{t("communities.yours")}</div>
 
         {communities.length === 0 ? (
           <EmptyState
             icon={<Users size={26} strokeWidth={1.5} />}
-            title="No communities yet"
-            hint="Creating or joining a community needs a linked WhatsApp session. Link your phone in Settings, then try again."
+            title={t("communities.emptyTitle")}
+            hint={t("communities.emptyHint")}
           />
         ) : (
           communities.map((community) => (
@@ -688,16 +681,16 @@ export function CommunitiesScreen() {
             className="community-modal"
             role="dialog"
             aria-modal="true"
-            aria-label="New community"
+            aria-label={t("communities.new")}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <header className="modal-header">
-              <h2 className="modal-title">New community</h2>
+              <h2 className="modal-title">{t("communities.new")}</h2>
               <button
                 type="button"
                 className="icon-button"
-                title="Close"
-                aria-label="Close"
+                title={t("common.close")}
+                aria-label={t("common.close")}
                 onClick={closeCreate}
               >
                 <X size={22} />
@@ -705,14 +698,16 @@ export function CommunitiesScreen() {
             </header>
 
             <label className="community-modal-field">
-              <span className="community-modal-label">Name</span>
+              <span className="community-modal-label">
+                {t("communities.name")}
+              </span>
               <input
                 className="community-modal-input"
                 type="text"
                 value={name}
                 maxLength={NAME_MAX_LENGTH}
                 autoFocus
-                placeholder="Community name"
+                placeholder={t("communities.namePlaceholder")}
                 onChange={(event) => {
                   setName(event.target.value);
                   setCreateError(null);
@@ -725,15 +720,17 @@ export function CommunitiesScreen() {
 
             <label className="community-modal-field">
               <span className="community-modal-label">
-                Description{" "}
-                <span className="community-modal-optional">(optional)</span>
+                {t("communities.description")}{" "}
+                <span className="community-modal-optional">
+                  {t("communities.optional")}
+                </span>
               </span>
               <textarea
                 className="community-modal-textarea"
                 value={description}
                 maxLength={DESCRIPTION_MAX_LENGTH}
                 rows={3}
-                placeholder="What is this community about?"
+                placeholder={t("communities.descriptionPlaceholder")}
                 onChange={(event) => {
                   setDescription(event.target.value);
                   setCreateError(null);
@@ -754,7 +751,7 @@ export function CommunitiesScreen() {
                 disabled={creating}
                 onClick={closeCreate}
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -762,7 +759,7 @@ export function CommunitiesScreen() {
                 disabled={creating || name.trim().length === 0}
                 onClick={() => void handleCreate()}
               >
-                {creating ? "Creating…" : "Create"}
+                {creating ? t("common.creating") : t("communities.create")}
               </button>
             </footer>
           </div>
@@ -771,19 +768,19 @@ export function CommunitiesScreen() {
 
       <ConfirmDialog
         open={deactivating !== null}
-        title="Deactivate community?"
+        title={t("communities.deactivateTitle")}
         body={
           deactivating ? (
             <>
-              Deactivating <strong>{deactivating.name}</strong> removes the
-              community and unlinks its groups. The groups themselves stay in
-              your chat list.
+              {t("communities.deactivateBodyPre")}{" "}
+              <strong>{deactivating.name}</strong>{" "}
+              {t("communities.deactivateBodyPost")}
             </>
           ) : (
             ""
           )
         }
-        confirmLabel="Deactivate"
+        confirmLabel={t("communities.deactivateConfirm")}
         danger
         busy={deactivateBusy}
         error={deactivateError}
@@ -841,8 +838,19 @@ function CommunityCard({
   onCopyLink,
   onDeactivate,
 }: CommunityCardProps) {
+  const { t } = useTranslation();
   const description = info?.description ?? community.description;
   const linkedGroups = info?.linkedGroups ?? [];
+  const membersLabel = info
+    ? info.participantCount === 1
+      ? t("communities.member", { count: info.participantCount })
+      : t("communities.members", { count: info.participantCount })
+    : null;
+  const groupsLabel = info
+    ? linkedGroups.length === 1
+      ? t("communities.linkedGroup", { count: linkedGroups.length })
+      : t("communities.linkedGroups", { count: linkedGroups.length })
+    : null;
 
   return (
     <div className="community-card">
@@ -858,15 +866,14 @@ function CommunityCard({
         <span className="community-card-body">
           <span className="community-name">{community.name}</span>
           <span className="community-meta">
-            {info
-              ? `${info.participantCount.toLocaleString()} ${
-                  info.participantCount === 1 ? "member" : "members"
-                } · ${linkedGroups.length} linked ${
-                  linkedGroups.length === 1 ? "group" : "groups"
-                }`
+            {info && membersLabel && groupsLabel
+              ? t("communities.meta", {
+                  members: membersLabel,
+                  groups: groupsLabel,
+                })
               : loading
-                ? "Loading…"
-                : "Open for details"}
+                ? t("common.loading")
+                : t("communities.openForDetails")}
           </span>
         </span>
         {expanded ? (
@@ -889,7 +896,7 @@ function CommunityCard({
               disabled={busy}
               onClick={onInviteLink}
             >
-              {busy ? "Working…" : "Invite link"}
+              {busy ? t("common.working") : t("communities.inviteLink")}
             </button>
             <button
               type="button"
@@ -897,7 +904,7 @@ function CommunityCard({
               disabled={busy}
               onClick={onDeactivate}
             >
-              Deactivate
+              {t("communities.deactivate")}
             </button>
           </div>
 
@@ -909,22 +916,24 @@ function CommunityCard({
               <button
                 type="button"
                 className="icon-button"
-                title="Copy invite link"
-                aria-label="Copy invite link"
+                title={t("communities.copyInviteLink")}
+                aria-label={t("communities.copyInviteLink")}
                 onClick={onCopyLink}
               >
                 <Copy size={16} />
               </button>
               {copied ? (
                 <span className="community-copied" role="status">
-                  Copied
+                  {t("common.copied")}
                 </span>
               ) : null}
             </div>
           ) : null}
 
           {loading && !info ? (
-            <p className="community-detail-hint">Loading linked groups…</p>
+            <p className="community-detail-hint">
+              {t("communities.loadingLinkedGroups")}
+            </p>
           ) : error ? (
             <div className="community-detail-error" role="alert">
               <p>{error}</p>
@@ -934,13 +943,15 @@ function CommunityCard({
                 disabled={busy}
                 onClick={onRetry}
               >
-                Retry
+                {t("common.retry")}
               </button>
             </div>
           ) : (
             <div className="community-group-list">
               {linkedGroups.length === 0 ? (
-                <p className="community-detail-hint">No groups linked yet.</p>
+                <p className="community-detail-hint">
+                  {t("communities.noGroups")}
+                </p>
               ) : (
                 linkedGroups.map((group) => (
                   <div className="community-group" key={group.id}>
@@ -950,16 +961,24 @@ function CommunityCard({
                     <span className="community-group-name">
                       {group.name || group.id}
                       {group.isDefaultSubGroup ? (
-                        <span className="community-group-tag">Announcements</span>
+                        <span className="community-group-tag">
+                          {t("communities.tagAnnouncements")}
+                        </span>
                       ) : group.isGeneralChat ? (
-                        <span className="community-group-tag">General</span>
+                        <span className="community-group-tag">
+                          {t("communities.tagGeneral")}
+                        </span>
                       ) : null}
                     </span>
                     <button
                       type="button"
                       className="icon-button community-group-unlink"
-                      title={`Unlink ${group.name || group.id}`}
-                      aria-label={`Unlink ${group.name || group.id}`}
+                      title={t("communities.unlink", {
+                        name: group.name || group.id,
+                      })}
+                      aria-label={t("communities.unlink", {
+                        name: group.name || group.id,
+                      })}
                       disabled={busy}
                       onClick={() => onUnlinkGroup(group)}
                     >
@@ -975,11 +994,13 @@ function CommunityCard({
             <select
               className="community-link-select"
               value={choice}
-              aria-label={`Group to link to ${community.name}`}
+              aria-label={t("communities.linkToAria", {
+                name: community.name,
+              })}
               disabled={busy}
               onChange={(event) => onChoice(event.target.value)}
             >
-              <option value="">Link a group…</option>
+              <option value="">{t("communities.linkPlaceholder")}</option>
               {groups.map((group) => (
                 <option key={group.id} value={group.id}>
                   {group.name}
@@ -992,7 +1013,7 @@ function CommunityCard({
               disabled={busy || choice.length === 0}
               onClick={onLinkGroup}
             >
-              Link
+              {t("communities.link")}
             </button>
           </div>
 

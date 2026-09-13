@@ -18,6 +18,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { Check, LoaderCircle, RefreshCw } from "lucide-react";
+import { useTranslation } from "../../lib/i18n";
 import type { Jid } from "../../lib/types";
 import { useLabels } from "./useLabels";
 import type { Label } from "./types";
@@ -72,6 +73,7 @@ export function LabelsMenu({
   y,
   onClose,
 }: LabelsMenuProps) {
+  const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ x, y });
   const [measured, setMeasured] = useState(false);
@@ -125,7 +127,7 @@ export function LabelsMenu({
       setActionError(
         cause instanceof Error
           ? cause.message
-          : "Couldn't update the label.",
+          : t("labels.updateError"),
       );
     });
   };
@@ -157,7 +159,7 @@ export function LabelsMenu({
       ref={menuRef}
       className="labels-menu"
       role="dialog"
-      aria-label={`Labels for ${chatName}`}
+      aria-label={t("labels.aria", { name: chatName })}
       style={{
         left: position.x,
         top: position.y,
@@ -167,7 +169,7 @@ export function LabelsMenu({
       onKeyDown={handleNavigation}
     >
       <header className="labels-menu-header">
-        <span className="labels-menu-title">Label chat</span>
+        <span className="labels-menu-title">{t("labels.title")}</span>
         <span className="labels-menu-chat">{chatName}</span>
       </header>
 
@@ -175,7 +177,7 @@ export function LabelsMenu({
         {loading ? (
           <p className="labels-menu-note">
             <LoaderCircle size={16} className="business-spin" />
-            Loading labels…
+            {t("labels.loading")}
           </p>
         ) : error ? (
           <div className="labels-menu-error">
@@ -186,14 +188,11 @@ export function LabelsMenu({
               onClick={reload}
             >
               <RefreshCw size={14} />
-              Try again
+              {t("common.tryAgain")}
             </button>
           </div>
         ) : labels.length === 0 ? (
-          <p className="labels-menu-note">
-            No labels yet. This build can assign labels, but creating them
-            happens in WhatsApp.
-          </p>
+          <p className="labels-menu-note">{t("labels.empty")}</p>
         ) : (
           labels.map((label) => {
             const associated = label.chatIds.includes(chatId);
@@ -235,9 +234,7 @@ export function LabelsMenu({
         </p>
       ) : null}
 
-      <p className="labels-menu-footer">
-        From the last label sync — no per-chat read exists yet.
-      </p>
+      <p className="labels-menu-footer">{t("labels.footer")}</p>
     </div>
   );
 }

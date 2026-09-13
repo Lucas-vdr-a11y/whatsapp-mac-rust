@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useRef } from "react";
+import { useTranslation } from "../../lib/i18n";
 import { initials } from "../../lib/names";
 import type { MentionParticipant } from "./mentions";
 
@@ -25,6 +26,7 @@ export function MentionMenu({
   onHover,
   onPick,
 }: MentionMenuProps) {
+  const { t } = useTranslation();
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,11 +41,11 @@ export function MentionMenu({
       ref={listRef}
       className="mention-menu"
       role="listbox"
-      aria-label="Mention suggestions"
+      aria-label={t("mention.suggestionsAria")}
     >
-      <div className="mention-menu-header">Group members</div>
+      <div className="mention-menu-header">{t("mention.groupMembers")}</div>
       {participants.length === 0 ? (
-        <div className="mention-empty">No matching participants</div>
+        <div className="mention-empty">{t("mention.noMatches")}</div>
       ) : (
         participants.map((participant, index) => {
           const active = index === activeIndex;

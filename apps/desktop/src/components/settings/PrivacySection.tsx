@@ -11,6 +11,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { isTauri } from "../../lib/ipc";
+import { t, useTranslation } from "../../lib/i18n";
 import { BlockedList } from "./BlockedList";
 import { SettingsRow } from "./SettingsRow";
 import {
@@ -34,8 +35,8 @@ type Loadable<T> =
 
 interface VisibilityRow {
   category: PrivacyCategory;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
   icon: ReactNode;
 }
 
@@ -43,44 +44,45 @@ interface VisibilityRow {
 const VISIBILITY_ROWS: VisibilityRow[] = [
   {
     category: "last",
-    label: "Last seen",
-    description: "Who can see when you were last online.",
+    labelKey: "settings.privacy.lastSeen",
+    descriptionKey: "settings.privacy.lastSeenDescription",
     icon: <Clock size={20} />,
   },
   {
     category: "profile",
-    label: "Profile photo",
-    description: "Who can see your profile photo.",
+    labelKey: "settings.privacy.profilePhoto",
+    descriptionKey: "settings.privacy.profilePhotoDescription",
     icon: <UserRound size={20} />,
   },
   {
     // The wire category for the about text is `status` (upstream
     // `PrivacyCategory::Status`: "About/status text visibility").
     category: "status",
-    label: "About",
-    description: "Who can see your about text.",
+    labelKey: "settings.privacy.about",
+    descriptionKey: "settings.privacy.aboutDescription",
     icon: <Info size={20} />,
   },
   {
     category: "readreceipts",
-    label: "Read receipts",
-    description:
-      "Share blue ticks when you read messages. Turning them off also hides other people's.",
+    labelKey: "settings.privacy.readReceipts",
+    descriptionKey: "settings.privacy.readReceiptsDescription",
     icon: <CheckCheck size={20} />,
   },
 ];
 
 /** Default disappearing-message timers offered by WhatsApp Web. */
-const DISAPPEARING_OPTIONS: { seconds: number; label: string }[] = [
-  { seconds: 0, label: "Off" },
-  { seconds: 86400, label: "24 hours" },
-  { seconds: 604800, label: "7 days" },
-  { seconds: 7776000, label: "90 days" },
+const DISAPPEARING_OPTIONS: { seconds: number; labelKey: string }[] = [
+  { seconds: 0, labelKey: "settings.privacy.timerOff" },
+  { seconds: 86400, labelKey: "settings.privacy.timer24h" },
+  { seconds: 604800, labelKey: "settings.privacy.timer7d" },
+  { seconds: 7776000, labelKey: "settings.privacy.timer90d" },
 ];
 
 function disappearingLabel(seconds: number): string {
   const option = DISAPPEARING_OPTIONS.find((entry) => entry.seconds === seconds);
-  return option ? option.label : `${seconds} seconds`;
+  return option
+    ? t(option.labelKey)
+    : t("settings.privacy.timerFallback", { seconds });
 }
 
 /**
@@ -89,6 +91,7 @@ function disappearingLabel(seconds: number): string {
  * panel. State stays local to this component; the app store is not touched.
  */
 export function PrivacySection() {
+  const { t } = useTranslation();
   const [privacy, setPrivacy] = useState<Loadable<PrivacySnapshot>>({
     status: "loading",
   });
@@ -109,7 +112,10 @@ export function PrivacySection() {
 
   useEffect(() => {
     if (!isTauri()) {
-      setPrivacy({ status: "unavailable", message: PRIVACY_UNAVAILABLE });
+      setPrivacy({
+        status: "unavailable",
+        message: t(PRIVACY_UNAVAILABLE),
+      });
       return;
     }
     let cancelled = false;
@@ -190,7 +196,7 @@ export function PrivacySection() {
 
   return (
     <>
-      <h2 className="settings-section-title">Privacy</h2>
+      <h2 className="settings-section-title">{t("settings.privacy.title")}</h2>
       <div className="settings-group">
         {VISIBILITY_ROWS.map((row) => {
           const ready = privacy.status === "ready";
@@ -198,17 +204,18 @@ export function PrivacySection() {
           const error =
             rowError?.category === row.category ? rowError.message : null;
           const saving = busy === row.category;
+          const label = t(row.labelKey);
 
           return (
             <Fragment key={row.category}>
               <SettingsRow
                 icon={row.icon}
-                label={row.label}
+                label={label}
                 description={
                   error ? (
                     <span className="settings-inline-error">{error}</span>
                   ) : (
-                    row.description
+                    t(row.descriptionKey)
                   )
                 }
                 disabled={!ready}
@@ -227,11 +234,11 @@ export function PrivacySection() {
                   >
                     <span className="privacy-value-text">
                       {saving
-                        ? "Saving…"
+                        ? t("settings.privacy.saving")
                         : privacy.status === "loading"
-                          ? "Checking…"
+                          ? t("settings.privacy.checking")
                           : current === null
-                            ? "Not set"
+                            ? t("settings.privacy.notSet")
                             : privacyValueLabel(current)}
                     </span>
                     <ChevronDown size={14} aria-hidden="true" />
@@ -242,7 +249,7 @@ export function PrivacySection() {
                 <div
                   className="privacy-choice-panel"
                   role="radiogroup"
-                  aria-label={row.label}
+                  aria-label={label}
                 >
                   {privacyOptions(row.category).map((option) => {
                     const selected = current === option.value;
@@ -265,9 +272,7 @@ export function PrivacySection() {
                   })}
                   {current === "contact_blacklist" ? (
                     <p className="privacy-choice-note">
-                      This account uses an exception list ("My contacts
-                      except…"). This build can't edit the exceptions, but
-                      choosing an option above replaces the list.
+                      {t("settings.privacy.exceptionNote")}
                     </p>
                   ) : null}
                 </div>
@@ -281,22 +286,24 @@ export function PrivacySection() {
             a separate protocol mechanism this build does not expose. */}
         <SettingsRow
           icon={<CircleDashed size={20} />}
-          label="Status"
-          description="Status updates privacy isn't exposed by this build's core yet."
+          label={t("settings.privacy.status")}
+          description={t("settings.privacy.statusDescription")}
           disabled
           control={<span className="settings-value">—</span>}
         />
 
         <SettingsRow
           icon={<Timer size={20} />}
-          label="Default message timer"
+          label={t("settings.privacy.disappearing")}
           description={
             timerError ? (
               <span className="settings-inline-error">{timerError}</span>
             ) : timer === null ? (
-              "Timer for new chats. Your current default isn't read back from the server."
+              t("settings.privacy.disappearingUnset")
             ) : (
-              `New chats disappear after ${disappearingLabel(timer).toLowerCase()}.`
+              t("settings.privacy.disappearingSet", {
+                label: disappearingLabel(timer).toLowerCase(),
+              })
             )
           }
           control={
@@ -312,9 +319,9 @@ export function PrivacySection() {
             >
               <span className="privacy-value-text">
                 {timerBusy
-                  ? "Saving…"
+                  ? t("settings.privacy.saving")
                   : timer === null
-                    ? "Not set here"
+                    ? t("settings.privacy.notSetHere")
                     : disappearingLabel(timer)}
               </span>
               <ChevronDown size={14} aria-hidden="true" />
@@ -325,7 +332,7 @@ export function PrivacySection() {
           <div
             className="privacy-choice-panel"
             role="radiogroup"
-            aria-label="Default message timer"
+            aria-label={t("settings.privacy.disappearing")}
           >
             {DISAPPEARING_OPTIONS.map((option) => {
               const selected = timer === option.seconds;
@@ -339,7 +346,9 @@ export function PrivacySection() {
                   disabled={timerBusy}
                   onClick={() => changeTimer(option.seconds)}
                 >
-                  <span className="privacy-choice-label">{option.label}</span>
+                  <span className="privacy-choice-label">
+                    {t(option.labelKey)}
+                  </span>
                   {selected ? <Check size={16} aria-hidden="true" /> : null}
                 </button>
               );
@@ -349,8 +358,8 @@ export function PrivacySection() {
 
         <SettingsRow
           icon={<Ban size={20} />}
-          label="Blocked contacts"
-          description="Block and unblock contacts by phone number or JID."
+          label={t("settings.privacy.blockedContacts")}
+          description={t("settings.privacy.blockedDescription")}
           onClick={() => setBlockedOpen((open) => !open)}
           control={
             <ChevronDown
@@ -372,7 +381,7 @@ export function PrivacySection() {
               className="settings-button"
               onClick={() => setAttempt((value) => value + 1)}
             >
-              Retry
+              {t("common.retry")}
             </button>
           ) : null}
         </p>

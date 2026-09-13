@@ -5,6 +5,7 @@
 
 import { useEffect } from "react";
 import { TriangleAlert } from "lucide-react";
+import { useTranslation } from "../../lib/i18n";
 
 interface ConfirmDialogProps {
   title: string;
@@ -22,13 +23,17 @@ interface ConfirmDialogProps {
 export function ConfirmDialog({
   title,
   body,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
+  confirmLabel,
+  cancelLabel,
   danger = false,
   busy = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation();
+  const resolvedConfirmLabel = confirmLabel ?? t("common.confirm");
+  const resolvedCancelLabel = cancelLabel ?? t("common.cancel");
+
   useEffect(() => {
     if (busy) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -67,7 +72,7 @@ export function ConfirmDialog({
             disabled={busy}
             onClick={onCancel}
           >
-            {cancelLabel}
+            {resolvedCancelLabel}
           </button>
           <button
             type="button"
@@ -76,7 +81,7 @@ export function ConfirmDialog({
             autoFocus
             onClick={onConfirm}
           >
-            {busy ? "Working…" : confirmLabel}
+            {busy ? t("common.working") : resolvedConfirmLabel}
           </button>
         </div>
       </div>

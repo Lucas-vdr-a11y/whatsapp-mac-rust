@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
+import { useTranslation } from "../lib/i18n";
 import { invokeCore, isTauri } from "../lib/ipc";
 import { useAppStore } from "../store/app";
 import { Lock } from "./icons";
@@ -9,6 +10,7 @@ const MOCK_QR =
   "2@mock-pairing-payload-0123456789abcdefghijklmnopqrstuvwxyz,RUSTWA-MOCK";
 
 export function PairingScreen() {
+  const { t } = useTranslation();
   const qrCode = useAppStore((state) => state.qrCode);
   const qrTimeoutSecs = useAppStore((state) => state.qrTimeoutSecs);
   const pairingExpired = useAppStore((state) => state.pairingExpired);
@@ -47,16 +49,16 @@ export function PairingScreen() {
   const payload = qrCode ?? MOCK_QR;
 
   const statusText = pairingExpired
-    ? "The code expired — generate a new one to continue"
+    ? t("pairing.expiredStatus")
     : qrCode
       ? secondsLeft > 0
-        ? `Waiting for you to scan the code · refreshes in ${secondsLeft}s`
-        : "Refreshing the code…"
+        ? t("pairing.waitingSeconds", { seconds: secondsLeft })
+        : t("pairing.refreshing")
       : connection === "connecting" || busy
-        ? "Connecting to WhatsApp…"
+        ? t("pairing.connecting")
         : !isTauri()
-          ? "Waiting for you to scan the code"
-          : "Preparing pairing…";
+          ? t("pairing.waiting")
+          : t("pairing.preparing");
 
   return (
     <div className="pairing">
@@ -64,31 +66,27 @@ export function PairingScreen() {
 
       <div className="pairing-content">
         <h1 className="pairing-title">RustWA</h1>
-        <p className="pairing-lede">
-          The fast, unofficial WhatsApp client for macOS. Link this device to
-          get started.
-        </p>
+        <p className="pairing-lede">{t("pairing.lede")}</p>
 
         <ol className="pairing-steps">
-          <li>Open WhatsApp on your phone</li>
+          <li>{t("pairing.step1")}</li>
           <li>
-            Tap <strong>Settings</strong> and select{" "}
-            <strong>Linked devices</strong>
+            {t("pairing.step2Pre")} <strong>{t("pairing.step2Settings")}</strong>{" "}
+            {t("pairing.step2Mid")}{" "}
+            <strong>{t("pairing.step2Linked")}</strong>
           </li>
           <li>
-            Tap <strong>Link a device</strong> and point your phone at this
-            screen
+            {t("pairing.step3Pre")} <strong>{t("pairing.step3Link")}</strong>{" "}
+            {t("pairing.step3Post")}
           </li>
         </ol>
 
         {pairingExpired ? (
           <div className="pairing-expired" role="status">
-            <p className="pairing-expired-title">This QR code has expired</p>
-            <p className="pairing-expired-body">
-              WhatsApp only shows each code for a short time. Generate a fresh
-              one and scan it promptly — the code also refreshes automatically
-              on screen.
+            <p className="pairing-expired-title">
+              {t("pairing.expiredTitle")}
             </p>
+            <p className="pairing-expired-body">{t("pairing.expiredBody")}</p>
             <div className="pairing-expired-actions">
               <button
                 type="button"
@@ -96,7 +94,7 @@ export function PairingScreen() {
                 disabled={busy}
                 onClick={() => void run("core_restart_pairing")}
               >
-                Generate a new code
+                {t("pairing.generate")}
               </button>
               <button
                 type="button"
@@ -104,13 +102,13 @@ export function PairingScreen() {
                 disabled={busy}
                 onClick={() => void run("core_reset_session")}
               >
-                Start over (reset session)
+                {t("pairing.startOver")}
               </button>
             </div>
           </div>
         ) : (
           <>
-            <div className="qr-card" aria-label="Pairing QR code">
+            <div className="qr-card" aria-label={t("pairing.qrAria")}>
               <QRCodeSVG
                 value={payload}
                 size={280}
@@ -127,7 +125,7 @@ export function PairingScreen() {
               disabled={busy}
               onClick={() => void run("core_restart_pairing")}
             >
-              Not working? Generate a new code
+              {t("pairing.notWorking")}
             </button>
           </>
         )}
@@ -136,14 +134,14 @@ export function PairingScreen() {
           <div className="pairing-error" role="alert">
             <span>{error}</span>
             <button type="button" onClick={() => void run("core_connect")}>
-              Retry
+              {t("common.retry")}
             </button>
           </div>
         )}
 
         <p className="pairing-footer">
           <Lock size={12} />
-          <span>End-to-end encrypted</span>
+          <span>{t("common.e2eEncrypted")}</span>
         </p>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Fingerprint, KeyRound, Lock } from "lucide-react";
+import { useTranslation } from "../../lib/i18n";
 import { invokeCore, isTauri } from "../../lib/ipc";
 import { errorMessage } from "../settings/util";
 import { readAppLockMirror, writeAppLockMirror } from "./preference";
@@ -24,6 +25,7 @@ const UNLOCKED_EVENT = "ui://unlocked";
  * separate password path to implement.
  */
 export function LockScreen() {
+  const { t } = useTranslation();
   // Read the mirrored preference synchronously so the overlay can cover the
   // very first paint; the effect below still verifies it against the host.
   const [locked, setLocked] = useState(() => isTauri() && readAppLockMirror());
@@ -88,16 +90,14 @@ export function LockScreen() {
       className="lock-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="RustWA is locked"
+      aria-label={t("security.lockedAria")}
     >
       <div className="lock-card">
         <span className="lock-badge" aria-hidden="true">
           <Lock size={28} strokeWidth={1.8} />
         </span>
-        <h1 className="lock-title">RustWA is locked</h1>
-        <p className="lock-subtitle">
-          Unlock to see your chats. Nothing is shown until you authenticate.
-        </p>
+        <h1 className="lock-title">{t("security.lockedTitle")}</h1>
+        <p className="lock-subtitle">{t("security.lockedSubtitle")}</p>
 
         <div className="lock-actions">
           <button
@@ -105,19 +105,21 @@ export function LockScreen() {
             className="lock-button primary"
             autoFocus
             disabled={busy}
-            onClick={() => unlock("unlock your chats")}
+            onClick={() => unlock(t("security.unlockReason"))}
           >
             <Fingerprint size={18} aria-hidden="true" />
-            {busy ? "Waiting for Touch ID…" : "Unlock with Touch ID"}
+            {busy
+              ? t("security.waitingForTouchId")
+              : t("security.unlockWithTouchId")}
           </button>
           <button
             type="button"
             className="lock-button"
             disabled={busy}
-            onClick={() => unlock("unlock your chats with your password")}
+            onClick={() => unlock(t("security.unlockPasswordReason"))}
           >
             <KeyRound size={16} aria-hidden="true" />
-            Use Mac password
+            {t("security.useMacPassword")}
           </button>
         </div>
 
@@ -126,9 +128,7 @@ export function LockScreen() {
             {error}
           </p>
         ) : (
-          <p className="lock-hint">
-            Touch ID or your Mac password — macOS decides which prompt to show.
-          </p>
+          <p className="lock-hint">{t("security.touchIdHint")}</p>
         )}
       </div>
     </div>

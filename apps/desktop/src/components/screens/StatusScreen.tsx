@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { invokeCore, isTauri } from "../../lib/ipc";
+import { t, useTranslation } from "../../lib/i18n";
 import { initials } from "../../lib/names";
 import { useAppStore } from "../../store/app";
 import { EmptyState, ScreenHeader } from "./shared";
@@ -47,12 +48,12 @@ interface StatusGroup {
 /** Six status backgrounds drawn from the app palette. The core receives the
  * ARGB value; `css` mirrors it for the swatch. */
 const STATUS_BACKGROUNDS = [
-  { id: "green", name: "Green", css: "#21c063", argb: 0xff21c063 },
-  { id: "forest", name: "Forest", css: "#144d37", argb: 0xff144d37 },
-  { id: "sky", name: "Sky", css: "#53bdeb", argb: 0xff53bdeb },
-  { id: "coral", name: "Coral", css: "#f15c6d", argb: 0xfff15c6d },
-  { id: "amber", name: "Amber", css: "#ffbc38", argb: 0xffffbc38 },
-  { id: "ink", name: "Ink", css: "#242626", argb: 0xff242626 },
+  { id: "green", labelKey: "status.background.green", css: "#21c063", argb: 0xff21c063 },
+  { id: "forest", labelKey: "status.background.forest", css: "#144d37", argb: 0xff144d37 },
+  { id: "sky", labelKey: "status.background.sky", css: "#53bdeb", argb: 0xff53bdeb },
+  { id: "coral", labelKey: "status.background.coral", css: "#f15c6d", argb: 0xfff15c6d },
+  { id: "amber", labelKey: "status.background.amber", css: "#ffbc38", argb: 0xffffbc38 },
+  { id: "ink", labelKey: "status.background.ink", css: "#242626", argb: 0xff242626 },
 ] as const;
 
 const STATUS_MAX_LENGTH = 700;
@@ -120,10 +121,10 @@ function friendlyError(error: unknown, fallback: string): string {
       raw,
     )
   ) {
-    return "Status updates need a linked WhatsApp session. Link your phone in Settings, then try again.";
+    return t("status.needsSession");
   }
   if (/not implemented|unknown command|unrecognized/i.test(raw)) {
-    return "Status updates aren't available in this build yet.";
+    return t("status.unavailable");
   }
   return raw;
 }
@@ -138,13 +139,13 @@ function argbToCss(argb: number | null): string {
 function updateLabel(kind: StatusKind): string {
   switch (kind) {
     case "image":
-      return "Photo";
+      return t("media.photo");
     case "video":
-      return "Video";
+      return t("media.video");
     case "voice":
-      return "Voice message";
+      return t("media.voice");
     default:
-      return "Status update";
+      return t("status.updateLabel");
   }
 }
 
@@ -165,7 +166,7 @@ function statusTime(unixSeconds: number): string {
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
-  return sameDay ? time : `Yesterday, ${time}`;
+  return sameDay ? time : t("status.yesterday", { time });
 }
 
 /** Contact name when the chat list knows it, otherwise the JID user part. */
@@ -176,6 +177,7 @@ function senderName(sender: string, names: Record<string, string>): string {
 }
 
 export function StatusScreen() {
+  const { t } = useTranslation();
   const chats = useAppStore((state) => state.chats);
   const names = useMemo(() => {
     const map: Record<string, string> = {};
@@ -216,7 +218,7 @@ export function StatusScreen() {
       const cutoff = Math.floor(Date.now() / 1000) - STATUS_TTL_SECS;
       setUpdates(rows.filter((row) => row.timestamp >= cutoff));
     } catch (error) {
-      setListError(friendlyError(error, "Couldn't load status updates."));
+      setListError(friendlyError(error, t("status.loadError")));
     } finally {
       setLoading(false);
     }
@@ -337,14 +339,14 @@ export function StatusScreen() {
           text: trimmed,
           backgroundArgb,
         });
-        setNotice("Status posted.");
+        setNotice(t("status.posted"));
       } else {
-        setNotice("Status posted (browser preview).");
+        setNotice(t("status.postedPreview"));
       }
       setText("");
       setComposerOpen(false);
     } catch (error) {
-      setPostError(friendlyError(error, "Couldn't post your status."));
+      setPostError(friendlyError(error, t("status.postError")));
     } finally {
       setPosting(false);
     }
@@ -357,16 +359,20 @@ export function StatusScreen() {
 
   return (
     <section className="chat-list screen">
-      <ScreenHeader title="Status">
+      <ScreenHeader title={t("status.title")}>
         <button
           type="button"
           className="icon-button"
-          title="Text status"
+          title={t("status.textStatus")}
           onClick={openComposer}
         >
           <Pencil size={22} />
         </button>
-        <button type="button" className="icon-button" title="Add to my status">
+        <button
+          type="button"
+          className="icon-button"
+          title={t("status.addToMyStatus")}
+        >
           <Camera size={22} />
         </button>
       </ScreenHeader>
@@ -386,9 +392,9 @@ export function StatusScreen() {
             </span>
           </span>
           <span className="status-item-body">
-            <span className="status-item-name">My status</span>
+            <span className="status-item-name">{t("status.myStatus")}</span>
             <span className="status-item-preview">
-              Click to add status update
+              {t("status.clickToAdd")}
             </span>
           </span>
         </button>
@@ -399,10 +405,12 @@ export function StatusScreen() {
           </p>
         ) : null}
 
-        <div className="screen-section-label accent">Recent updates</div>
+        <div className="screen-section-label accent">
+          {t("status.recentUpdates")}
+        </div>
 
         {loading && updates.length === 0 ? (
-          <p className="screen-loading">Loading updates…</p>
+          <p className="screen-loading">{t("status.loading")}</p>
         ) : null}
 
         {listError ? (
@@ -413,7 +421,7 @@ export function StatusScreen() {
               className="modal-action secondary"
               onClick={() => void loadUpdates()}
             >
-              Retry
+              {t("common.retry")}
             </button>
           </div>
         ) : null}
@@ -421,8 +429,8 @@ export function StatusScreen() {
         {!loading && !listError && groups.length === 0 ? (
           <EmptyState
             icon={<UserRound size={26} strokeWidth={1.5} />}
-            title="No status updates in the last 24 hours"
-            hint="Updates from your contacts will show up here."
+            title={t("status.emptyTitle")}
+            hint={t("status.emptyHint")}
           />
         ) : null}
 
@@ -436,7 +444,7 @@ export function StatusScreen() {
         ))}
 
         {viewedGroups.length > 0 ? (
-          <div className="screen-section-label">Viewed</div>
+          <div className="screen-section-label">{t("status.viewed")}</div>
         ) : null}
         {viewedGroups.map((group) => (
           <StatusGroupRow
@@ -454,14 +462,14 @@ export function StatusScreen() {
               className="status-viewer"
               role="dialog"
               aria-modal="true"
-              aria-label={`Status from ${viewerName}`}
+              aria-label={t("status.viewerAria", { name: viewerName })}
               onClick={() => setViewer(null)}
             >
               <button
                 type="button"
                 className="status-viewer-close"
-                title="Close"
-                aria-label="Close"
+                title={t("common.close")}
+                aria-label={t("common.close")}
                 onClick={() => setViewer(null)}
               >
                 <X size={26} />
@@ -503,7 +511,7 @@ export function StatusScreen() {
                   </p>
                   {!viewedUpdate.text && viewedUpdate.kind !== "text" ? (
                     <p className="status-viewer-hint">
-                      Media previews aren't available yet.
+                      {t("status.mediaUnavailable")}
                     </p>
                   ) : null}
                 </div>
@@ -514,8 +522,8 @@ export function StatusScreen() {
                   <button
                     type="button"
                     className="status-viewer-nav prev"
-                    title="Previous update"
-                    aria-label="Previous update"
+                    title={t("status.previousUpdate")}
+                    aria-label={t("status.previousUpdate")}
                     disabled={viewer.index === 0}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -527,8 +535,8 @@ export function StatusScreen() {
                   <button
                     type="button"
                     className="status-viewer-nav next"
-                    title="Next update"
-                    aria-label="Next update"
+                    title={t("status.nextUpdate")}
+                    aria-label={t("status.nextUpdate")}
                     disabled={viewer.index >= viewer.group.updates.length - 1}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -550,16 +558,16 @@ export function StatusScreen() {
             className="status-composer"
             role="dialog"
             aria-modal="true"
-            aria-label="My status"
+            aria-label={t("status.myStatus")}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <header className="modal-header">
-              <h2 className="modal-title">My status</h2>
+              <h2 className="modal-title">{t("status.myStatus")}</h2>
               <button
                 type="button"
                 className="icon-button"
-                title="Close"
-                aria-label="Close"
+                title={t("common.close")}
+                aria-label={t("common.close")}
                 onClick={closeComposer}
               >
                 <X size={22} />
@@ -568,7 +576,7 @@ export function StatusScreen() {
 
             <textarea
               className="status-composer-input"
-              placeholder="Type a status update"
+              placeholder={t("status.composerPlaceholder")}
               value={text}
               maxLength={STATUS_MAX_LENGTH}
               rows={4}
@@ -586,7 +594,7 @@ export function StatusScreen() {
             <div
               className="status-composer-swatches"
               role="radiogroup"
-              aria-label="Background color"
+              aria-label={t("status.backgroundsAria")}
             >
               {STATUS_BACKGROUNDS.map((background) => (
                 <button
@@ -594,8 +602,10 @@ export function StatusScreen() {
                   type="button"
                   role="radio"
                   aria-checked={backgroundArgb === background.argb}
-                  aria-label={`${background.name} background`}
-                  title={background.name}
+                  aria-label={t("status.backgroundAria", {
+                    name: t(background.labelKey),
+                  })}
+                  title={t(background.labelKey)}
                   className={`status-swatch${
                     backgroundArgb === background.argb ? " selected" : ""
                   }`}
@@ -618,7 +628,7 @@ export function StatusScreen() {
                 disabled={posting}
                 onClick={closeComposer}
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -626,7 +636,7 @@ export function StatusScreen() {
                 disabled={posting || text.trim().length === 0}
                 onClick={() => void handlePost()}
               >
-                {posting ? "Posting…" : "Post"}
+                {posting ? t("status.posting") : t("status.post")}
               </button>
             </footer>
           </div>
@@ -646,6 +656,7 @@ function StatusGroupRow({
   name: string;
   onOpen: (group: StatusGroup) => void;
 }) {
+  const { t } = useTranslation();
   const count = group.updates.length;
   return (
     <button
@@ -653,8 +664,11 @@ function StatusGroupRow({
       className="status-item status-item-button"
       aria-label={
         group.unviewed > 0
-          ? `${name}, ${group.unviewed} unviewed updates`
-          : `${name}, viewed`
+          ? t("status.groupAriaUnviewed", {
+              name,
+              count: group.unviewed,
+            })
+          : t("status.groupAriaViewed", { name })
       }
       onClick={() => onOpen(group)}
     >

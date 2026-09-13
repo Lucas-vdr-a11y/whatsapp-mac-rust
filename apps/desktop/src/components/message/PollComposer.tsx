@@ -19,6 +19,7 @@
 
 import { useEffect, useState } from "react";
 import { Plus, X } from "lucide-react";
+import { useTranslation } from "../../lib/i18n";
 import { invokeCore, isTauri } from "../../lib/ipc";
 import type { Jid } from "../../lib/types";
 import { rememberPollOptions } from "./messageLocalState";
@@ -36,6 +37,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 export function PollComposer({ chatId, onClose }: PollComposerProps) {
+  const { t } = useTranslation();
   const [question, setQuestion] = useState("");
   const [options, setOptions] = useState<string[]>(["", ""]);
   const [selectableCount, setSelectableCount] = useState(1);
@@ -73,15 +75,15 @@ export function PollComposer({ chatId, onClose }: PollComposerProps) {
     const trimmedQuestion = question.trim();
     const names = options.map((option) => option.trim());
     if (!trimmedQuestion) {
-      setError("Enter a question.");
+      setError(t("poll.enterQuestion"));
       return;
     }
     if (names.length < MIN_OPTIONS || names.some((name) => !name)) {
-      setError("Fill in at least two options.");
+      setError(t("poll.fillOptions"));
       return;
     }
     if (new Set(names).size !== names.length) {
-      setError("Options must be unique.");
+      setError(t("poll.uniqueOptions"));
       return;
     }
 
@@ -119,16 +121,16 @@ export function PollComposer({ chatId, onClose }: PollComposerProps) {
         className="message-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Create poll"
+        aria-label={t("poll.create")}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="modal-header">
-          <h2 className="modal-title">Create poll</h2>
+          <h2 className="modal-title">{t("poll.create")}</h2>
           <button
             type="button"
             className="icon-button"
-            title="Close"
-            aria-label="Close"
+            title={t("common.close")}
+            aria-label={t("common.close")}
             disabled={busy}
             onClick={onClose}
           >
@@ -138,11 +140,11 @@ export function PollComposer({ chatId, onClose }: PollComposerProps) {
 
         <div className="poll-composer-body">
           <label className="poll-field">
-            <span className="poll-field-label">Question</span>
+            <span className="poll-field-label">{t("poll.question")}</span>
             <input
               className="poll-input"
               type="text"
-              placeholder="Ask a question"
+              placeholder={t("poll.askQuestion")}
               value={question}
               autoFocus
               maxLength={500}
@@ -154,13 +156,13 @@ export function PollComposer({ chatId, onClose }: PollComposerProps) {
           </label>
 
           <div className="poll-fields">
-            <span className="poll-field-label">Options</span>
+            <span className="poll-field-label">{t("poll.options")}</span>
             {options.map((option, index) => (
               <div className="poll-option-row" key={index}>
                 <input
                   className="poll-input"
                   type="text"
-                  placeholder={`Option ${index + 1}`}
+                  placeholder={t("poll.optionN", { n: index + 1 })}
                   value={option}
                   maxLength={200}
                   onChange={(event) => {
@@ -172,8 +174,8 @@ export function PollComposer({ chatId, onClose }: PollComposerProps) {
                   <button
                     type="button"
                     className="icon-button poll-option-remove"
-                    title="Remove option"
-                    aria-label={`Remove option ${index + 1}`}
+                    title={t("poll.removeOption", { n: index + 1 })}
+                    aria-label={t("poll.removeOption", { n: index + 1 })}
                     onClick={() => removeOption(index)}
                   >
                     <X size={18} />
@@ -188,13 +190,13 @@ export function PollComposer({ chatId, onClose }: PollComposerProps) {
                 onClick={addOption}
               >
                 <Plus size={16} />
-                Add option
+                {t("poll.addOption")}
               </button>
             ) : null}
           </div>
 
           <label className="poll-field poll-count">
-            <span className="poll-field-label">Selectable answers</span>
+            <span className="poll-field-label">{t("poll.selectable")}</span>
             <input
               className="poll-input"
               type="number"
@@ -220,7 +222,7 @@ export function PollComposer({ chatId, onClose }: PollComposerProps) {
         ) : null}
 
         <footer className="new-chat-footer">
-          <span className="new-chat-count">2–6 options</span>
+          <span className="new-chat-count">{t("poll.range")}</span>
           <div className="new-chat-actions">
             <button
               type="button"
@@ -228,7 +230,7 @@ export function PollComposer({ chatId, onClose }: PollComposerProps) {
               disabled={busy}
               onClick={onClose}
             >
-              Cancel
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -236,7 +238,7 @@ export function PollComposer({ chatId, onClose }: PollComposerProps) {
               disabled={busy}
               onClick={submit}
             >
-              {busy ? "Creating…" : "Create poll"}
+              {busy ? t("common.creating") : t("poll.createButton")}
             </button>
           </div>
         </footer>

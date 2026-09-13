@@ -12,6 +12,7 @@ import {
   Music,
   RotateCw,
 } from "lucide-react";
+import { useTranslation } from "../../lib/i18n";
 import type { Message } from "../../lib/types";
 import { useAppStore } from "../../store/app";
 import { formatBytes } from "./media";
@@ -19,14 +20,16 @@ import { formatBytes } from "./media";
 type LoadState = "idle" | "loading" | "error";
 
 export function FileContent({ message }: { message: Message }) {
+  const { t } = useTranslation();
   const meta = useAppStore((state) => state.mediaMeta[message.id]);
   const path = useAppStore((state) => state.mediaPaths[message.id]);
   const downloadMedia = useAppStore((state) => state.downloadMedia);
   const [state, setState] = useState<LoadState>("idle");
 
   const isAudio = message.kind === "audio";
-  const kindLabel = isAudio ? "Audio" : "Document";
-  const name = meta?.fileName ?? (isAudio ? "Audio message" : "Document");
+  const kindLabel = isAudio ? t("media.audio") : t("media.document");
+  const name =
+    meta?.fileName ?? (isAudio ? t("media.audioMessage") : t("media.document"));
   const details = meta
     ? [formatBytes(meta.size), kindLabel].filter(Boolean).join(" · ")
     : kindLabel;
@@ -55,10 +58,10 @@ export function FileContent({ message }: { message: Message }) {
           }`}
           title={
             path
-              ? "Downloaded"
+              ? t("media.downloaded")
               : state === "error"
-                ? "Retry download"
-                : "Download"
+                ? t("media.retryDownload")
+                : t("media.download")
           }
           onClick={path || state === "loading" ? undefined : download}
         >

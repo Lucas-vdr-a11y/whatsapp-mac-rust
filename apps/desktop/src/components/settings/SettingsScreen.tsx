@@ -3,6 +3,7 @@ import {
   Bell,
   FileText,
   Info,
+  Languages,
   LogOut,
   MessageCircle,
   Monitor,
@@ -10,11 +11,18 @@ import {
   ShieldAlert,
   SunMoon,
 } from "lucide-react";
+import {
+  setLang,
+  t,
+  useTranslation,
+  type Lang,
+} from "../../lib/i18n";
 import { invokeCore, isTauri } from "../../lib/ipc";
 import { useAppStore } from "../../store/app";
 import { ScreenHeader } from "../screens/shared";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PrivacySection } from "./PrivacySection";
+import { SecuritySection } from "./SecuritySection";
 import { SettingsRow } from "./SettingsRow";
 import { Toggle } from "./Toggle";
 import {
@@ -63,10 +71,15 @@ function writeBadgePreference(enabled: boolean): void {
   }
 }
 
-const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "system", label: "System" },
+const THEME_OPTIONS: { value: ThemePreference; labelKey: string }[] = [
+  { value: "light", labelKey: "settings.themeLight" },
+  { value: "dark", labelKey: "settings.themeDark" },
+  { value: "system", labelKey: "settings.themeSystem" },
+];
+
+const LANGUAGE_OPTIONS: { value: Lang; labelKey: string }[] = [
+  { value: "en", labelKey: "settings.langEnglish" },
+  { value: "nl", labelKey: "settings.langNederlands" },
 ];
 
 function ThemePicker({
@@ -76,8 +89,14 @@ function ThemePicker({
   value: ThemePreference;
   onChange: (theme: ThemePreference) => void;
 }) {
+  const { t: translate } = useTranslation();
+
   return (
-    <div className="settings-segments" role="radiogroup" aria-label="Theme">
+    <div
+      className="settings-segments"
+      role="radiogroup"
+      aria-label={translate("settings.themeAria")}
+    >
       {THEME_OPTIONS.map((option) => (
         <button
           key={option.value}
@@ -89,7 +108,41 @@ function ThemePicker({
           }`}
           onClick={() => onChange(option.value)}
         >
-          {option.label}
+          {translate(option.labelKey)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** English / Nederlands segmented control; applies the choice immediately. */
+function LanguagePicker({
+  value,
+  onChange,
+}: {
+  value: Lang;
+  onChange: (lang: Lang) => void;
+}) {
+  const { t: translate } = useTranslation();
+
+  return (
+    <div
+      className="settings-segments"
+      role="radiogroup"
+      aria-label={translate("settings.languageAria")}
+    >
+      {LANGUAGE_OPTIONS.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={value === option.value}
+          className={`settings-segment${
+            value === option.value ? " active" : ""
+          }`}
+          onClick={() => onChange(option.value)}
+        >
+          {translate(option.labelKey)}
         </button>
       ))}
     </div>
@@ -97,24 +150,25 @@ function ThemePicker({
 }
 
 function describePermission(state: Loadable<boolean>): string {
-  if (state.status === "loading") return "Checking notification permission…";
+  if (state.status === "loading") return t("settings.checkingPermission");
   if (state.status === "ready") {
     return state.value
-      ? "Allowed — notifications can appear on this Mac."
-      : "Denied — allow RustWA in System Settings › Notifications, then request again.";
+      ? t("settings.permissionAllowed")
+      : t("settings.permissionDenied");
   }
   return state.message;
 }
 
 function describeAutostart(state: Loadable<boolean>): string {
-  if (state.status === "loading") return "Checking…";
+  if (state.status === "loading") return t("settings.checking");
   if (state.status === "ready") {
-    return "Open RustWA automatically when you sign in to your Mac.";
+    return t("settings.autostartDescription");
   }
   return state.message;
 }
 
 export function SettingsScreen() {
+  const { t: translate, lang } = useTranslation();
   const [theme, setTheme] = useState<ThemePreference>(() =>
     readThemePreference(),
   );
@@ -123,7 +177,7 @@ export function SettingsScreen() {
       ? { status: "loading" }
       : {
           status: "unavailable",
-          message: "Only available in the desktop app.",
+          message: t("settings.onlyDesktop"),
         },
   );
   const [permission, setPermission] = useState<Loadable<boolean>>({
@@ -192,7 +246,7 @@ export function SettingsScreen() {
     if (!isTauri()) {
       setPermission({
         status: "unavailable",
-        message: "Notifications are only available in the desktop app.",
+        message: t("settings.notificationsOnlyDesktop"),
       });
       return;
     }
@@ -200,7 +254,7 @@ export function SettingsScreen() {
     if (capabilities.status === "ready" && !capabilities.value.notifications) {
       setPermission({
         status: "unavailable",
-        message: "Notifications are not supported on this platform.",
+        message: t("settings.notificationsUnsupported"),
       });
       return;
     }
@@ -227,7 +281,7 @@ export function SettingsScreen() {
     if (!isTauri()) {
       setAutostart({
         status: "unavailable",
-        message: "Launch at login is only available in the desktop app.",
+        message: t("settings.autostartOnlyDesktop"),
       });
       return;
     }
@@ -253,7 +307,7 @@ export function SettingsScreen() {
     if (!isTauri()) {
       setAppInfo({
         status: "unavailable",
-        message: "Build information is only available in the desktop app.",
+        message: t("settings.buildInfoOnlyDesktop"),
       });
       return;
     }
@@ -295,6 +349,10 @@ export function SettingsScreen() {
     applyThemePreference(next);
   };
 
+  const changeLanguage = (next: Lang) => {
+    setLang(next);
+  };
+
   const changeBadge = (enabled: boolean) => {
     setBadgeEnabled(enabled);
     writeBadgePreference(enabled);
@@ -320,10 +378,10 @@ export function SettingsScreen() {
     setNotifyNote(null);
     invokeCore("notify", {
       title: "RustWA",
-      body: "Notifications are set up correctly.",
+      body: t("settings.testNotificationBody"),
     })
       .then(() =>
-        setNotifyNote({ kind: "ok", text: "Test notification sent." }),
+        setNotifyNote({ kind: "ok", text: t("settings.testNotificationSent") }),
       )
       .catch((cause) =>
         setNotifyNote({ kind: "error", text: errorMessage(cause) }),
@@ -354,7 +412,7 @@ export function SettingsScreen() {
 
   const runDangerAction = (command: "core_logout" | "core_reset_session") => {
     if (!isTauri()) {
-      setDangerError("This action is only available in the desktop app.");
+      setDangerError(t("settings.actionOnlyDesktop"));
       return;
     }
     setDangerBusy(true);
@@ -380,7 +438,7 @@ export function SettingsScreen() {
         disabled={permissionBusy}
         onClick={sendTestNotification}
       >
-        {permissionBusy ? "Sending…" : "Send test"}
+        {permissionBusy ? t("settings.sending") : t("settings.sendTest")}
       </button>
     );
   } else if (permission.status !== "loading" && isTauri()) {
@@ -391,31 +449,43 @@ export function SettingsScreen() {
         disabled={permissionBusy}
         onClick={requestPermission}
       >
-        {permissionBusy ? "Requesting…" : "Request"}
+        {permissionBusy ? t("settings.requesting") : t("settings.request")}
       </button>
     );
   }
 
   return (
     <section className="chat-list screen">
-      <ScreenHeader title="Settings" />
+      <ScreenHeader title={translate("settings.title")} />
 
       <div className="screen-body settings-body">
-        <h2 className="settings-section-title">Appearance</h2>
+        <h2 className="settings-section-title">
+          {translate("settings.appearance")}
+        </h2>
         <div className="settings-group">
           <SettingsRow
             icon={<SunMoon size={20} />}
-            label="Theme"
-            description="System follows your Mac's appearance."
+            label={translate("settings.theme")}
+            description={translate("settings.themeDescription")}
             control={<ThemePicker value={theme} onChange={changeTheme} />}
+          />
+          <SettingsRow
+            icon={<Languages size={20} />}
+            label={translate("settings.language")}
+            description={translate("settings.languageDescription")}
+            control={
+              <LanguagePicker value={lang} onChange={changeLanguage} />
+            }
           />
         </div>
 
-        <h2 className="settings-section-title">Notifications</h2>
+        <h2 className="settings-section-title">
+          {translate("settings.notifications")}
+        </h2>
         <div className="settings-group">
           <SettingsRow
             icon={<Bell size={20} />}
-            label="Notification permission"
+            label={translate("settings.notificationPermission")}
             description={
               notifyNote ? (
                 <span
@@ -435,19 +505,19 @@ export function SettingsScreen() {
           />
           <SettingsRow
             icon={<Monitor size={20} />}
-            label="Dock badge"
+            label={translate("settings.dockBadge")}
             description={
               badgeError ? (
                 <span className="settings-inline-error">{badgeError}</span>
               ) : badgeSupported ? (
-                "Show a count of unread chats on the app icon."
+                translate("settings.dockBadgeDescription")
               ) : (
-                "Dock badges are not supported on this platform."
+                translate("settings.dockBadgeUnsupported")
               )
             }
             control={
               <Toggle
-                label="Dock badge"
+                label={translate("settings.dockBadge")}
                 checked={badgeEnabled}
                 disabled={!badgeSupported}
                 onChange={changeBadge}
@@ -457,12 +527,15 @@ export function SettingsScreen() {
         </div>
 
         <PrivacySection />
+        <SecuritySection />
 
-        <h2 className="settings-section-title">Startup</h2>
+        <h2 className="settings-section-title">
+          {translate("settings.startup")}
+        </h2>
         <div className="settings-group">
           <SettingsRow
             icon={<Power size={20} />}
-            label="Launch at login"
+            label={translate("settings.launchAtLogin")}
             description={
               autostartError ? (
                 <span className="settings-inline-error">{autostartError}</span>
@@ -472,7 +545,7 @@ export function SettingsScreen() {
             }
             control={
               <Toggle
-                label="Launch at login"
+                label={translate("settings.launchAtLogin")}
                 checked={autostart.status === "ready" && autostart.value}
                 disabled={autostart.status !== "ready" || autostartBusy}
                 onChange={changeAutostart}
@@ -481,29 +554,30 @@ export function SettingsScreen() {
           />
         </div>
 
-        <h2 className="settings-section-title">Storage</h2>
+        <h2 className="settings-section-title">
+          {translate("settings.storage")}
+        </h2>
         <div className="settings-group">
           <SettingsRow
             icon={<MessageCircle size={20} />}
-            label="Chats"
+            label={translate("settings.chats")}
             control={<span className="settings-value">{chatCount}</span>}
           />
           <SettingsRow
             icon={<FileText size={20} />}
-            label="Messages cached"
+            label={translate("settings.messagesCached")}
             control={<span className="settings-value">{messageCount}</span>}
           />
         </div>
-        <p className="settings-note">
-          Counts come from the in-memory store; history is cached as chats are
-          opened.
-        </p>
+        <p className="settings-note">{translate("settings.storageNote")}</p>
 
-        <h2 className="settings-section-title">About</h2>
+        <h2 className="settings-section-title">
+          {translate("settings.about")}
+        </h2>
         <div className="settings-group">
           <SettingsRow
             icon={<Info size={20} />}
-            label="Application"
+            label={translate("settings.application")}
             control={
               <span className="settings-value">
                 {appInfo.status === "ready" ? appInfo.value.name : "—"}
@@ -511,7 +585,7 @@ export function SettingsScreen() {
             }
           />
           <SettingsRow
-            label="Version"
+            label={translate("settings.version")}
             control={
               <span className="settings-value">
                 {appInfo.status === "ready" ? appInfo.value.version : "—"}
@@ -519,7 +593,7 @@ export function SettingsScreen() {
             }
           />
           <SettingsRow
-            label="Core"
+            label={translate("settings.core")}
             control={
               <span className="settings-value">
                 {appInfo.status === "ready" ? appInfo.value.core : "—"}
@@ -534,26 +608,25 @@ export function SettingsScreen() {
         ) : null}
         <p className="settings-disclaimer">
           <Info size={14} aria-hidden="true" />
-          <span>
-            RustWA is an unofficial WhatsApp client and is not affiliated with,
-            endorsed by, or sponsored by WhatsApp LLC or Meta Platforms, Inc.
-          </span>
+          <span>{translate("settings.disclaimer")}</span>
         </p>
 
-        <h2 className="settings-section-title danger">Danger zone</h2>
+        <h2 className="settings-section-title danger">
+          {translate("settings.dangerZone")}
+        </h2>
         <div className="settings-group">
           <SettingsRow
             danger
             icon={<LogOut size={20} />}
-            label="Log out"
-            description="Unlink this device. You will need to scan the QR code again."
+            label={translate("settings.logOut")}
+            description={translate("settings.logOutDescription")}
             onClick={() => openDanger("logout")}
           />
           <SettingsRow
             danger
             icon={<ShieldAlert size={20} />}
-            label="Reset local session"
-            description="Delete the local session and cached data on this computer."
+            label={translate("settings.resetSession")}
+            description={translate("settings.resetDescription")}
             onClick={() => openDanger("reset")}
           />
         </div>
@@ -561,9 +634,9 @@ export function SettingsScreen() {
 
       <ConfirmDialog
         open={dangerAction === "logout"}
-        title="Log out of RustWA?"
-        body="This unlinks this device from your WhatsApp account. You will need to scan the QR code again to use RustWA."
-        confirmLabel="Log out"
+        title={translate("settings.logOutTitle")}
+        body={translate("settings.logOutBody")}
+        confirmLabel={translate("settings.logOutConfirm")}
         danger
         busy={dangerBusy}
         error={dangerError}
@@ -572,10 +645,10 @@ export function SettingsScreen() {
       />
       <ConfirmDialog
         open={dangerAction === "reset"}
-        title="Reset local session?"
-        body="This permanently deletes the local session and all cached data on this computer. You will need to link this device again. This cannot be undone."
-        confirmLabel="Reset session"
-        confirmPhrase="reset"
+        title={translate("settings.resetTitle")}
+        body={translate("settings.resetBody")}
+        confirmLabel={translate("settings.resetConfirm")}
+        confirmPhrase={translate("settings.resetPhrase")}
         danger
         busy={dangerBusy}
         error={dangerError}

@@ -1,5 +1,6 @@
 /** Timestamp formatting helpers matching WhatsApp's conventions. */
 
+import { t } from "./i18n";
 export function formatListTime(unixSeconds: number): string {
   const date = new Date(unixSeconds * 1000);
   const now = new Date();
@@ -10,7 +11,7 @@ export function formatListTime(unixSeconds: number): string {
 
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (isSameDay(date, yesterday)) return "Yesterday";
+  if (isSameDay(date, yesterday)) return t("time.yesterday");
 
   const withinWeek = now.getTime() - date.getTime() < 6 * 24 * 60 * 60 * 1000;
   if (withinWeek) {
@@ -35,11 +36,11 @@ export function formatDateDivider(unixSeconds: number): string {
   const date = new Date(unixSeconds * 1000);
   const now = new Date();
 
-  if (isSameDay(date, now)) return "Today";
+  if (isSameDay(date, now)) return t("time.today");
 
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (isSameDay(date, yesterday)) return "Yesterday";
+  if (isSameDay(date, yesterday)) return t("time.yesterday");
 
   return date.toLocaleDateString([], {
     day: "numeric",

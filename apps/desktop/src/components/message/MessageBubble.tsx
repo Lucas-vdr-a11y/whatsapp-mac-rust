@@ -15,6 +15,7 @@ import {
   Trash,
 } from "lucide-react";
 import { invokeCore, isTauri } from "../../lib/ipc";
+import { useTranslation } from "../../lib/i18n";
 import { formatBubbleTime } from "../../lib/time";
 import type { ChatSummary, Message, MessageStatus } from "../../lib/types";
 import { useAppStore } from "../../store/app";
@@ -46,6 +47,7 @@ export function MessageBubble({
   tail,
   onEdit,
 }: MessageBubbleProps) {
+  const { t } = useTranslation();
   const deleted = useAppStore((state) =>
     Boolean(state.deletedMessages[message.id]),
   );
@@ -139,33 +141,33 @@ export function MessageBubble({
   if (!deleted) {
     menuItems.push({
       id: "reply",
-      label: "Reply",
+      label: t("message.reply"),
       icon: Reply,
       onSelect: () =>
         setReplyTo({
           chatId: message.chatId,
           messageId: message.id,
           preview: messagePreview(message),
-          senderName: message.fromMe ? "You" : chat.name,
+          senderName: message.fromMe ? t("common.you") : chat.name,
         }),
     });
     menuItems.push({
       id: "react",
-      label: "React",
+      label: t("message.react"),
       icon: SmilePlus,
       onSelect: () =>
         setPopover({ kind: "react", x: menu?.x ?? 0, y: menu?.y ?? 0 }),
     });
     menuItems.push({
       id: "forward",
-      label: "Forward",
+      label: t("message.forward"),
       icon: Forward,
       onSelect: () => setForwardOpen(true),
     });
     if (message.text) {
       menuItems.push({
         id: "copy",
-        label: "Copy text",
+        label: t("message.copyText"),
         icon: Copy,
         onSelect: copyText,
       });
@@ -173,7 +175,7 @@ export function MessageBubble({
   }
   menuItems.push({
     id: "star",
-    label: starred ? "Unstar message" : "Star message",
+    label: starred ? t("message.unstar") : t("message.star"),
     icon: Star,
     onSelect: () => toggleStar(message.chatId, message.id, message.fromMe),
   });
@@ -182,13 +184,13 @@ export function MessageBubble({
       pinned
         ? {
             id: "unpin",
-            label: "Unpin message",
+            label: t("message.unpin"),
             icon: PinOff,
             onSelect: unpinMessage,
           }
         : {
             id: "pin",
-            label: "Pin message",
+            label: t("message.pin"),
             icon: Pin,
             onSelect: () =>
               setPopover({ kind: "pin", x: menu?.x ?? 0, y: menu?.y ?? 0 }),
@@ -198,7 +200,7 @@ export function MessageBubble({
   if (!deleted && message.fromMe && message.kind === "text") {
     menuItems.push({
       id: "edit",
-      label: "Edit message",
+      label: t("message.edit"),
       icon: Pencil,
       onSelect: () => onEdit(message),
     });
@@ -206,7 +208,7 @@ export function MessageBubble({
   menuItems.push({ kind: "separator", id: "separator" });
   menuItems.push({
     id: "delete",
-    label: "Delete message",
+    label: t("message.delete"),
     icon: Trash,
     danger: true,
     onSelect: () =>
@@ -222,18 +224,22 @@ export function MessageBubble({
         <div className={classes.join(" ")} onContextMenu={openMenu}>
           {quote ? (
             <QuotePreview
-              author={quote.senderName ?? "Reply"}
+              author={quote.senderName ?? t("common.reply")}
               text={quote.preview}
             />
           ) : null}
           {deleted ? (
-            <span className="deleted-text">This message was deleted</span>
+            <span className="deleted-text">{t("message.deleted")}</span>
           ) : (
             <MessageContent message={message} />
           )}
           <span className="bubble-meta">
             {pinned ? (
-              <Pin size={12} className="pin-glyph" aria-label="Pinned message" />
+              <Pin
+                size={12}
+                className="pin-glyph"
+                aria-label={t("message.pinnedAria")}
+              />
             ) : null}
             {formatBubbleTime(message.timestamp)}
             {message.fromMe && <StatusTick status={message.status} />}

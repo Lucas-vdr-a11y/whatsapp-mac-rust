@@ -18,6 +18,7 @@
  */
 
 import { invokeCore, isTauri } from "../../lib/ipc";
+import { t } from "../../lib/i18n";
 import type { Jid } from "../../lib/types";
 import type { BusinessProfile, Catalog, CatalogProduct, Label } from "./types";
 
@@ -56,10 +57,10 @@ export function businessErrorMessage(error: unknown, fallback: string): string {
       raw,
     )
   ) {
-    return "Business features aren't available in this build yet.";
+    return t("business.featuresUnavailable");
   }
   if (/not connected|not linked|not paired|disconnected/i.test(raw)) {
-    return "That needs an active WhatsApp connection.";
+    return t("business.needsConnection");
   }
   return raw;
 }
@@ -294,7 +295,7 @@ function normalizeExternalUrl(url: string): string {
 export async function openExternal(url: string): Promise<void> {
   const target = normalizeExternalUrl(url);
   if (!target || target === "https://") {
-    throw new Error("That link doesn't look like a web address.");
+    throw new Error(t("business.invalidUrl"));
   }
 
   const opener = await loadOpener();
@@ -305,9 +306,7 @@ export async function openExternal(url: string): Promise<void> {
 
   const opened = window.open(target, "_blank", "noopener,noreferrer");
   if (!opened) {
-    throw new Error(
-      "The link couldn't be opened. Check your popup blocker and try again.",
-    );
+    throw new Error(t("business.popupBlocked"));
   }
 }
 

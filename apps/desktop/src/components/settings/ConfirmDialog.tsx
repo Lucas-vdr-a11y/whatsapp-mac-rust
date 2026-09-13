@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "../../lib/i18n";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -25,7 +26,7 @@ export function ConfirmDialog({
   title,
   body,
   confirmLabel,
-  cancelLabel = "Cancel",
+  cancelLabel,
   danger = false,
   busy = false,
   error = null,
@@ -33,6 +34,8 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation();
+  const resolvedCancelLabel = cancelLabel ?? t("common.cancel");
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [phrase, setPhrase] = useState("");
 
@@ -78,7 +81,8 @@ export function ConfirmDialog({
         {confirmPhrase ? (
           <label className="settings-dialog-phrase">
             <span>
-              Type <strong>{confirmPhrase}</strong> to confirm
+              {t("common.typeToConfirmPre")} <strong>{confirmPhrase}</strong>{" "}
+              {t("common.typeToConfirmPost")}
             </span>
             <input
               value={phrase}
@@ -104,7 +108,7 @@ export function ConfirmDialog({
             disabled={busy}
             onClick={onCancel}
           >
-            {cancelLabel}
+            {resolvedCancelLabel}
           </button>
           <button
             type="button"
@@ -112,7 +116,7 @@ export function ConfirmDialog({
             disabled={busy || !phraseMatches}
             onClick={onConfirm}
           >
-            {busy ? "Working…" : confirmLabel}
+            {busy ? t("common.working") : confirmLabel}
           </button>
         </div>
       </div>

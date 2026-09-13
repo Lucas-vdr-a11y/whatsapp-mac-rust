@@ -15,6 +15,7 @@
  */
 
 import { invokeCore, isTauri } from "../../lib/ipc";
+import { t } from "../../lib/i18n";
 import { errorMessage } from "./util";
 
 /** Wire spellings accepted by `WaClient::set_privacy_setting`. */
@@ -57,20 +58,21 @@ export interface PrivacyOption {
   label: string;
 }
 
-/** Human label for a wire value; unknown values fall through unchanged. */
-const VALUE_LABELS: Record<string, string> = {
-  all: "Everyone",
-  contacts: "My contacts",
-  none: "Nobody",
-  contact_blacklist: "My contacts except…",
-  match_last_seen: "Same as last seen",
-  known: "People you know",
-  off: "Off",
-  on_standard: "Standard",
+/** Translation keys for a wire value; unknown values fall through unchanged. */
+const VALUE_LABEL_KEYS: Record<string, string> = {
+  all: "settings.privacy.valueAll",
+  contacts: "settings.privacy.valueContacts",
+  none: "settings.privacy.valueNone",
+  contact_blacklist: "settings.privacy.valueBlacklist",
+  match_last_seen: "settings.privacy.valueMatchLastSeen",
+  known: "settings.privacy.valueKnown",
+  off: "settings.privacy.valueOff",
+  on_standard: "settings.privacy.valueStandard",
 };
 
 export function privacyValueLabel(value: string): string {
-  return VALUE_LABELS[value] ?? value;
+  const key = VALUE_LABEL_KEYS[value];
+  return key ? t(key) : value;
 }
 
 /**
@@ -81,27 +83,26 @@ export function privacyValueLabel(value: string): string {
 export function privacyOptions(category: PrivacyCategory): PrivacyOption[] {
   if (category === "readreceipts") {
     return [
-      { value: "all", label: "Everyone" },
-      { value: "none", label: "Nobody" },
+      { value: "all", label: t("settings.privacy.valueAll") },
+      { value: "none", label: t("settings.privacy.valueNone") },
     ];
   }
   if (category === "last" || category === "profile" || category === "status") {
     return [
-      { value: "all", label: "Everyone" },
-      { value: "contacts", label: "My contacts" },
-      { value: "none", label: "Nobody" },
+      { value: "all", label: t("settings.privacy.valueAll") },
+      { value: "contacts", label: t("settings.privacy.valueContacts") },
+      { value: "none", label: t("settings.privacy.valueNone") },
     ];
   }
   return [];
 }
 
 /** Browser (mock) mode cannot reach the Rust host. */
-export const PRIVACY_UNAVAILABLE =
-  "Privacy settings are only available in the desktop app.";
+export const PRIVACY_UNAVAILABLE = "settings.privacy.unavailable";
 
 /** Fetch the account's privacy snapshot (`privacy_get`). */
 export async function fetchPrivacySnapshot(): Promise<PrivacySnapshot> {
-  if (!isTauri()) throw new Error(PRIVACY_UNAVAILABLE);
+  if (!isTauri()) throw new Error(t("settings.privacy.unavailable"));
   return invokeCore<PrivacySnapshot>("privacy_get");
 }
 
@@ -110,19 +111,25 @@ export async function setPrivacySetting(
   category: PrivacyCategory,
   value: PrivacyValue,
 ): Promise<void> {
-  if (!isTauri()) throw new Error("This setting is only available in the desktop app.");
+  if (!isTauri()) {
+    throw new Error(t("settings.privacy.settingOnlyDesktop"));
+  }
   await invokeCore("privacy_set", { setting: category, value });
 }
 
 /** Block one contact by JID (`privacy_block`). */
 export async function blockContact(jid: string): Promise<void> {
-  if (!isTauri()) throw new Error("Blocking is only available in the desktop app.");
+  if (!isTauri()) {
+    throw new Error(t("settings.privacy.blockOnlyDesktop"));
+  }
   await invokeCore("privacy_block", { jid });
 }
 
 /** Unblock one contact by JID (`privacy_unblock`). */
 export async function unblockContact(jid: string): Promise<void> {
-  if (!isTauri()) throw new Error("Unblocking is only available in the desktop app.");
+  if (!isTauri()) {
+    throw new Error(t("settings.privacy.unblockOnlyDesktop"));
+  }
   await invokeCore("privacy_unblock", { jid });
 }
 
@@ -133,7 +140,7 @@ export async function unblockContact(jid: string): Promise<void> {
  */
 export async function setDisappearingDefault(seconds: number): Promise<void> {
   if (!isTauri()) {
-    throw new Error("Disappearing messages are only available in the desktop app.");
+    throw new Error(t("settings.privacy.disappearingOnlyDesktop"));
   }
   await invokeCore("privacy_set_disappearing_default", { seconds });
 }
@@ -145,10 +152,10 @@ export async function setDisappearingDefault(seconds: number): Promise<void> {
 export function privacyErrorMessage(cause: unknown): string {
   const raw = errorMessage(cause);
   if (/not connected|not linked|not paired|disconnected|pairing required/i.test(raw)) {
-    return "Not connected — link your device to change this.";
+    return t("settings.privacy.notConnected");
   }
   if (/not implemented|unknown command|command .* not found|unrecognized|not compiled/i.test(raw)) {
-    return "This build doesn't support that setting yet.";
+    return t("settings.privacy.unsupported");
   }
   return raw;
 }

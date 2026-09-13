@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Star } from "lucide-react";
+import { useTranslation } from "../lib/i18n";
 import {
   CircleDashed,
   MessageCircle,
@@ -21,7 +22,7 @@ export type RailSection =
 
 interface RailItem {
   id: RailSection;
-  label: string;
+  labelKey: string;
   icon: ReactNode;
 }
 
@@ -29,16 +30,16 @@ interface RailItem {
 // Starred. Communities live inside the chat list in the official client, so
 // they are reachable but not a rail item here either.
 const primaryItems: RailItem[] = [
-  { id: "chats", label: "Chats", icon: <MessageCircle size={24} /> },
-  { id: "calls", label: "Calls", icon: <Phone size={24} /> },
-  { id: "status", label: "Status", icon: <CircleDashed size={24} /> },
-  { id: "channels", label: "Channels", icon: <RadioTower size={24} /> },
-  { id: "starred", label: "Starred messages", icon: <Star size={24} /> },
+  { id: "chats", labelKey: "nav.chats", icon: <MessageCircle size={24} /> },
+  { id: "calls", labelKey: "nav.calls", icon: <Phone size={24} /> },
+  { id: "status", labelKey: "nav.status", icon: <CircleDashed size={24} /> },
+  { id: "channels", labelKey: "nav.channels", icon: <RadioTower size={24} /> },
+  { id: "starred", labelKey: "nav.starred", icon: <Star size={24} /> },
 ];
 
 const secondaryItems: RailItem[] = [
-  { id: "settings", label: "Settings", icon: <Settings size={24} /> },
-  { id: "profile", label: "Profile", icon: <UserRound size={24} /> },
+  { id: "settings", labelKey: "nav.settings", icon: <Settings size={24} /> },
+  { id: "profile", labelKey: "nav.profile", icon: <UserRound size={24} /> },
 ];
 
 interface NavigationRailProps {
@@ -52,12 +53,14 @@ export function NavigationRail({
   onSelect,
   unreadCount,
 }: NavigationRailProps) {
+  const { t } = useTranslation();
+
   const renderItem = (item: RailItem) => (
     <button
       key={item.id}
       type="button"
-      title={item.label}
-      aria-label={item.label}
+      title={t(item.labelKey)}
+      aria-label={t(item.labelKey)}
       aria-current={active === item.id ? "page" : undefined}
       className={`rail-button${active === item.id ? " active" : ""}`}
       onClick={() => onSelect(item.id)}

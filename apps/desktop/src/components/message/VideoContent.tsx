@@ -9,6 +9,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { Eye, EyeOff, LoaderCircle, Play, RotateCw } from "lucide-react";
 import { avatarSrc } from "../../lib/avatar";
+import { useTranslation } from "../../lib/i18n";
 import type { Message } from "../../lib/types";
 import { useAppStore } from "../../store/app";
 import { Lightbox } from "./Lightbox";
@@ -22,6 +23,7 @@ import {
 type LoadState = "idle" | "loading" | "error";
 
 export function VideoContent({ message }: { message: Message }) {
+  const { t } = useTranslation();
   const path = useAppStore((state) => state.mediaPaths[message.id]);
   const downloadMedia = useAppStore((state) => state.downloadMedia);
   const [state, setState] = useState<LoadState>("idle");
@@ -90,14 +92,14 @@ export function VideoContent({ message }: { message: Message }) {
       <>
         <div
           className="view-once-card video viewed"
-          aria-label="View-once video, already opened"
+          aria-label={t("media.viewOnceVideoOpened")}
         >
           <span className="view-once-badge" aria-hidden="true">
             1
           </span>
           <span className="view-once-state">
             <EyeOff size={22} />
-            <span>Opened</span>
+            <span>{t("media.opened")}</span>
           </span>
         </div>
         {caption}
@@ -114,7 +116,11 @@ export function VideoContent({ message }: { message: Message }) {
           className={`view-once-card video${
             state === "error" ? " error" : ""
           }`}
-          title={state === "error" ? "Retry download" : "Tap to view once"}
+          title={
+            state === "error"
+              ? t("media.retryDownload")
+              : t("media.tapToViewOnce")
+          }
           onClick={state === "loading" ? undefined : revealOnce}
         >
           <span className="view-once-veil" aria-hidden="true" />
@@ -131,13 +137,13 @@ export function VideoContent({ message }: { message: Message }) {
             )}
             <span>
               {state === "loading"
-                ? "Downloading…"
+                ? t("media.downloading")
                 : state === "error"
-                  ? "Download failed — tap to retry"
-                  : "Tap to view once"}
+                  ? t("media.downloadFailed")
+                  : t("media.tapToViewOnce")}
             </span>
             {state === "idle" && autoDownloadOff ? (
-              <span className="media-hint">Auto-download is off</span>
+              <span className="media-hint">{t("media.autoDownloadOff")}</span>
             ) : null}
           </span>
         </button>
@@ -154,7 +160,7 @@ export function VideoContent({ message }: { message: Message }) {
         className={`video-tile${path ? "" : " empty"}${
           state === "error" ? " error" : ""
         }`}
-        title={path ? "Play video" : "Download video"}
+        title={path ? t("media.playVideo") : t("media.downloadVideo")}
         onClick={state === "loading" ? undefined : openVideo}
       >
         {path ? (
@@ -169,19 +175,19 @@ export function VideoContent({ message }: { message: Message }) {
         ) : state === "loading" ? (
           <span className="video-hint">
             <LoaderCircle size={28} className="spin" />
-            <span>Downloading…</span>
+            <span>{t("media.downloading")}</span>
           </span>
         ) : state === "error" ? (
           <span className="video-hint error">
             <RotateCw size={24} />
-            <span>Download failed — tap to retry</span>
+            <span>{t("media.downloadFailed")}</span>
           </span>
         ) : (
           <span className="video-hint">
             <Play size={30} />
-            <span>Video</span>
+            <span>{t("media.video")}</span>
             {autoDownloadOff ? (
-              <span className="media-hint">Auto-download is off</span>
+              <span className="media-hint">{t("media.autoDownloadOff")}</span>
             ) : null}
           </span>
         )}

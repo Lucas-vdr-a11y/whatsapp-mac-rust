@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { avatarSrc } from "../lib/avatar";
+import { useTranslation } from "../lib/i18n";
 import { initials } from "../lib/names";
 import { formatBubbleTime, formatDateDivider } from "../lib/time";
 import type { ChatSummary, Jid, Message } from "../lib/types";
@@ -145,6 +146,8 @@ export function Conversation({ chat }: ConversationProps) {
 }
 
 export function EmptyConversation() {
+  const { t } = useTranslation();
+
   return (
     <section className="conversation" style={{ position: "relative" }}>
       <div className="empty-conversation">
@@ -152,14 +155,11 @@ export function EmptyConversation() {
           <MessageCircle size={44} strokeWidth={1.2} />
         </div>
         <h2>RustWA</h2>
-        <p>
-          The unofficial WhatsApp client for macOS, built from scratch in Rust.
-          Pair this device to start messaging.
-        </p>
+        <p>{t("conversation.emptyLede")}</p>
       </div>
       <div className="empty-footer">
         <span>🔒</span>
-        <span>End-to-end encrypted</span>
+        <span>{t("common.e2eEncrypted")}</span>
       </div>
       <CallOverlay />
     </section>
@@ -167,6 +167,7 @@ export function EmptyConversation() {
 }
 
 function ConversationHeader({ chat }: { chat: ChatSummary }) {
+  const { t } = useTranslation();
   const typing = useAppStore(
     (state) => state.typingByChat[chat.id] ?? false,
   );
@@ -174,13 +175,15 @@ function ConversationHeader({ chat }: { chat: ChatSummary }) {
   const presence = useAppStore((state) => state.presenceByChat[chat.id]);
 
   const subtitle = typing
-    ? "typing…"
+    ? t("conversation.typing")
     : chat.isGroup
-      ? "Group"
+      ? t("conversation.group")
       : presence?.online
-        ? "online"
+        ? t("conversation.online")
         : presence?.lastSeenTs
-          ? `last seen ${formatBubbleTime(presence.lastSeenTs)}`
+          ? t("conversation.lastSeen", {
+              time: formatBubbleTime(presence.lastSeenTs),
+            })
           : null;
 
   return (
@@ -191,13 +194,17 @@ function ConversationHeader({ chat }: { chat: ChatSummary }) {
         {subtitle && <span className="conversation-subtitle">{subtitle}</span>}
       </div>
       <div className="header-actions no-drag">
-        <button type="button" className="icon-button" title="Search">
+        <button
+          type="button"
+          className="icon-button"
+          title={t("common.search")}
+        >
           <Search size={22} />
         </button>
         <button
           type="button"
           className="icon-button"
-          title="Voice call"
+          title={t("conversation.voiceCall")}
           onClick={() => startCall(chat.id, false)}
         >
           <Phone size={22} />
@@ -205,12 +212,16 @@ function ConversationHeader({ chat }: { chat: ChatSummary }) {
         <button
           type="button"
           className="icon-button"
-          title="Video call"
+          title={t("conversation.videoCall")}
           onClick={() => startCall(chat.id, true)}
         >
           <Video size={22} />
         </button>
-        <button type="button" className="icon-button" title="Menu">
+        <button
+          type="button"
+          className="icon-button"
+          title={t("common.menu")}
+        >
           <EllipsisVertical size={22} />
         </button>
       </div>
@@ -296,6 +307,7 @@ function Composer({
   onCancelEdit,
   onSaveEdit,
 }: ComposerProps) {
+  const { t } = useTranslation();
   const [text, setText] = useState("");
   // Mentions inserted via the autocomplete, tracked as spans in `text`.
   const [mentions, setMentions] = useState<MentionRef[]>([]);
@@ -556,13 +568,15 @@ function Composer({
       {editing ? (
         <div className="composer-context edit">
           <div className="composer-context-body">
-            <span className="composer-context-title">Editing message</span>
+            <span className="composer-context-title">
+              {t("conversation.editing")}
+            </span>
             <span className="composer-context-text">{editing.text}</span>
           </div>
           <button
             type="button"
             className="icon-button"
-            title="Cancel edit"
+            title={t("conversation.cancelEdit")}
             onClick={cancelEdit}
           >
             <X size={20} />
@@ -572,14 +586,14 @@ function Composer({
         <div className="composer-context">
           <div className="composer-context-body">
             <span className="composer-context-title">
-              {replyTo.senderName ?? "Reply"}
+              {replyTo.senderName ?? t("common.reply")}
             </span>
             <span className="composer-context-text">{replyTo.preview}</span>
           </div>
           <button
             type="button"
             className="icon-button"
-            title="Cancel reply"
+            title={t("conversation.cancelReply")}
             onClick={cancelReply}
           >
             <X size={20} />
@@ -591,7 +605,7 @@ function Composer({
         <button
           type="button"
           className="icon-button"
-          title="Emoji"
+          title={t("conversation.emoji")}
           aria-expanded={emojiOpen}
           onClick={toggleEmoji}
         >
@@ -600,7 +614,7 @@ function Composer({
         <button
           type="button"
           className="icon-button"
-          title="Attach"
+          title={t("conversation.attach")}
           aria-expanded={attachOpen}
           onClick={toggleAttach}
         >
@@ -611,7 +625,11 @@ function Composer({
           ref={textareaRef}
           className="composer-input"
           rows={1}
-          placeholder={editing ? "Edit message" : "Type a message"}
+          placeholder={
+            editing
+              ? t("conversation.editPlaceholder")
+              : t("conversation.typePlaceholder")
+          }
           value={text}
           onChange={(event) => {
             const value = event.target.value;
@@ -682,7 +700,7 @@ function Composer({
           <button
             type="button"
             className="icon-button"
-            title="Save edit"
+            title={t("conversation.saveEdit")}
             disabled={!hasText}
             onClick={submit}
           >
@@ -692,13 +710,17 @@ function Composer({
           <button
             type="button"
             className="icon-button"
-            title="Send"
+            title={t("conversation.send")}
             onClick={submit}
           >
             <Send size={24} />
           </button>
         ) : (
-          <button type="button" className="icon-button" title="Voice message">
+          <button
+            type="button"
+            className="icon-button"
+            title={t("conversation.voiceMessage")}
+          >
             <Mic size={24} />
           </button>
         )}

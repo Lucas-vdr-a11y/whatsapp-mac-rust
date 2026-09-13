@@ -6,6 +6,10 @@ export interface ChatSummary {
   id: Jid;
   name: string;
   lastMessagePreview: string | null;
+  /** Kind of the newest message, when the core knows it. */
+  lastMessageKind?: MessageKind | null;
+  /** True when the newest message was sent by this account. */
+  lastFromMe?: boolean;
   lastActivityTs: number;
   unreadCount: number;
   muted: boolean;

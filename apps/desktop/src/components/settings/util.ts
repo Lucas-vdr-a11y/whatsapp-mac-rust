@@ -1,5 +1,7 @@
 /** Shared helpers for the settings surfaces. */
 
+import { t } from "../../lib/i18n";
+
 /** Extracts a readable message from anything an IPC call can reject with. */
 export function errorMessage(cause: unknown): string {
   if (cause instanceof Error && cause.message.trim()) {
@@ -14,5 +16,5 @@ export function errorMessage(cause: unknown): string {
       return message;
     }
   }
-  return "Something went wrong. Try again.";
+  return t("common.unexpectedError");
 }

@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { initials } from "../../lib/names";
+import { useTranslation } from "../../lib/i18n";
 import { isTauri } from "../../lib/ipc";
 import { useAppStore } from "../../store/app";
 import { ContactList, jidLabel } from "./ContactList";
@@ -42,6 +43,7 @@ interface GroupInfoPanelProps {
 type InviteState = "idle" | "loading" | "copied";
 
 export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
+  const { t } = useTranslation();
   const [info, setInfo] = useState<GroupInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -74,7 +76,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
       })
       .catch((cause: unknown) => {
         if (!cancelled) {
-          setLoadError(friendlyError(cause, "Couldn't load group info."));
+          setLoadError(friendlyError(cause, t("groups.loadError")));
         }
       })
       .finally(() => {
@@ -138,7 +140,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
       }, 2000);
     } catch (cause) {
       setInviteState("idle");
-      setActionError(friendlyError(cause, "Couldn't fetch the invite link."));
+      setActionError(friendlyError(cause, t("groups.inviteError")));
     }
   };
 
@@ -174,7 +176,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
       );
       closePicker();
     } catch (cause) {
-      setActionError(friendlyError(cause, "Couldn't add participants."));
+      setActionError(friendlyError(cause, t("groups.addError")));
     } finally {
       setAdding(false);
     }
@@ -198,7 +200,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
           : current,
       );
     } catch (cause) {
-      setActionError(friendlyError(cause, "Couldn't remove the participant."));
+      setActionError(friendlyError(cause, t("groups.removeError")));
     } finally {
       setRemovingId(null);
     }
@@ -219,7 +221,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
       onClose();
     } catch (cause) {
       setLeaveOpen(false);
-      setActionError(friendlyError(cause, "Couldn't leave the group."));
+      setActionError(friendlyError(cause, t("groups.leaveError")));
     } finally {
       setLeaving(false);
     }
@@ -228,14 +230,14 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
   const showCopied = inviteState === "copied";
 
   return (
-    <aside className="group-info-panel" aria-label="Group info">
+    <aside className="group-info-panel" aria-label={t("groups.info")}>
       <header className="group-info-header" data-tauri-drag-region>
-        <h2 className="group-info-title">Group info</h2>
+        <h2 className="group-info-title">{t("groups.info")}</h2>
         <button
           type="button"
           className="icon-button no-drag"
-          title="Close"
-          aria-label="Close group info"
+          title={t("common.close")}
+          aria-label={t("groups.closeAria")}
           onClick={onClose}
         >
           <X size={22} />
@@ -253,7 +255,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
               className="modal-action secondary"
               onClick={() => setReloadToken((value) => value + 1)}
             >
-              Try again
+              {t("common.tryAgain")}
             </button>
           </div>
         ) : info ? (
@@ -263,8 +265,10 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
               <h3 className="group-info-subject">{info.subject}</h3>
               <p className="group-info-count">
                 {info.participantCount === 1
-                  ? "1 participant"
-                  : `${info.participantCount} participants`}
+                  ? t("groups.participantOne")
+                  : t("groups.participants", {
+                      count: info.participantCount,
+                    })}
               </p>
             </section>
 
@@ -285,15 +289,15 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
                   {showCopied ? <Check size={18} /> : <Link2 size={18} />}
                 </span>
                 <span className="group-info-row-label">
-                  {showCopied ? "Link copied" : "Invite link"}
+                  {showCopied ? t("groups.linkCopied") : t("groups.inviteLink")}
                 </span>
                 <span className="group-info-row-value">
                   {inviteState === "loading" ? (
                     <LoaderCircle size={16} className="spin" />
                   ) : showCopied ? (
-                    "Copied"
+                    t("groups.copied")
                   ) : (
-                    "Copy"
+                    t("groups.copy")
                   )}
                 </span>
               </button>
@@ -303,8 +307,8 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
               <header className="group-info-section-header">
                 <span>
                   {info.participantCount === 1
-                    ? "1 member"
-                    : `${info.participantCount} members`}
+                    ? t("groups.memberOne")
+                    : t("groups.members", { count: info.participantCount })}
                 </span>
                 <button
                   type="button"
@@ -316,7 +320,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
                   }}
                 >
                   <UserPlus size={16} />
-                  Add participants
+                  {t("groups.addParticipants")}
                 </button>
               </header>
 
@@ -326,7 +330,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
                     <Search size={16} />
                     <input
                       type="text"
-                      placeholder="Search contacts"
+                      placeholder={t("groups.searchContacts")}
                       value={addQuery}
                       autoFocus
                       onChange={(event) => setAddQuery(event.target.value)}
@@ -341,7 +345,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
                           className="modal-action secondary"
                           onClick={reloadContacts}
                         >
-                          Retry
+                          {t("common.retry")}
                         </button>
                       </div>
                     ) : (
@@ -351,8 +355,8 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
                         onToggle={toggleAddContact}
                         emptyText={
                           availableContacts.length === 0
-                            ? "Everyone is already in this group"
-                            : "No contacts found"
+                            ? t("groups.everyoneIn")
+                            : t("groups.noContacts")
                         }
                       />
                     )}
@@ -363,7 +367,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
                       className="modal-action secondary"
                       onClick={closePicker}
                     >
-                      Cancel
+                      {t("common.cancel")}
                     </button>
                     <button
                       type="button"
@@ -372,10 +376,10 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
                       onClick={() => void handleAdd()}
                     >
                       {adding
-                        ? "Adding…"
+                        ? t("groups.adding")
                         : addSelection.length > 0
-                          ? `Add (${addSelection.length})`
-                          : "Add"}
+                          ? t("groups.addN", { count: addSelection.length })
+                          : t("groups.add")}
                     </button>
                   </div>
                 </div>
@@ -395,8 +399,10 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
                       className={
                         removingId === jid ? "member-remove busy" : "member-remove"
                       }
-                      title="Remove from group"
-                      aria-label={`Remove ${displayName(jid)}`}
+                      title={t("groups.removeFromGroup")}
+                      aria-label={t("groups.removeAria", {
+                        name: displayName(jid),
+                      })}
                       disabled={removingId !== null}
                       onClick={() => void handleRemove(jid)}
                     >
@@ -409,7 +415,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
                   </div>
                 ))}
                 {info.participants.length === 0 ? (
-                  <p className="modal-empty">No participants listed</p>
+                  <p className="modal-empty">{t("groups.noParticipants")}</p>
                 ) : null}
               </div>
             </section>
@@ -423,7 +429,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
                 <span className="group-info-row-icon">
                   <LogOut size={18} />
                 </span>
-                <span className="group-info-row-label">Leave group</span>
+                <span className="group-info-row-label">{t("groups.leave")}</span>
               </button>
             </section>
           </>
@@ -432,11 +438,11 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
 
       {leaveOpen ? (
         <ConfirmDialog
-          title="Leave group?"
-          body={`You will no longer receive messages from ${
-            info?.subject ?? "this group"
-          }.`}
-          confirmLabel="Leave group"
+          title={t("groups.leaveTitle")}
+          body={t("groups.leaveBody", {
+            name: info?.subject ?? t("groups.title"),
+          })}
+          confirmLabel={t("groups.leaveConfirm")}
           danger
           busy={leaving}
           onConfirm={() => void handleLeave()}
