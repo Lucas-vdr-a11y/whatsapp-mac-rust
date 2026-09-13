@@ -1,6 +1,6 @@
 /** Bridges core events from the Rust host into the UI store. */
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invokeCore, isTauri, listenCore } from "./ipc";
 import type { ChatSummary } from "./types";
@@ -14,6 +14,8 @@ export function useCoreBridge(): void {
   const setPairCode = useAppStore((state) => state.setPairCode);
   const markPaired = useAppStore((state) => state.markPaired);
   const setChats = useAppStore((state) => state.setChats);
+  const setMessageStatus = useAppStore((state) => state.setMessageStatus);
+  const hydrateTimer = useRef<number | null>(null);
 
   const hydrateChats = useCallback(async () => {
     if (!isTauri()) return;
@@ -72,6 +74,24 @@ export function useCoreBridge(): void {
             .setChatTyping(event.payload.chatId, event.payload.isTyping);
           break;
 
+        case "messageStatusChanged":
+          setMessageStatus(
+            event.payload.chatId,
+            event.payload.messageId,
+            event.payload.status,
+          );
+          break;
+
+        case "chatUpdated":
+          // History sync emits bursts of these; debounce the rehydrate.
+          if (hydrateTimer.current === null) {
+            hydrateTimer.current = window.setTimeout(() => {
+              hydrateTimer.current = null;
+              void hydrateChats();
+            }, 400);
+          }
+          break;
+
         case "message": {
           const message = event.payload;
           appendMessage(message);
@@ -107,6 +127,10 @@ export function useCoreBridge(): void {
     return () => {
       cancelled = true;
       unlisten?.();
+      if (hydrateTimer.current !== null) {
+        window.clearTimeout(hydrateTimer.current);
+        hydrateTimer.current = null;
+      }
     };
   }, [
     appendMessage,
@@ -115,6 +139,7 @@ export function useCoreBridge(): void {
     setPairingExpired,
     setPairCode,
     markPaired,
+    setMessageStatus,
     hydrateChats,
   ]);
 }

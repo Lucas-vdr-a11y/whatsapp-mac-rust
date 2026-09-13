@@ -7,6 +7,7 @@ import type {
   ConnectionState,
   Jid,
   Message,
+  MessageStatus,
 } from "../lib/types";
 import { MOCK_CHATS, MOCK_MESSAGES } from "../mocks/data";
 
@@ -63,6 +64,12 @@ interface AppState {
   setMessages: (chatId: Jid, messages: Message[]) => void;
   /** Fetch a chat's history from the core, once. */
   loadMessages: (chatId: Jid) => void;
+  /** Update the delivery state of one message. */
+  setMessageStatus: (
+    chatId: Jid,
+    messageId: string,
+    status: MessageStatus,
+  ) => void;
   /** Typing indicators by chat, as reported by the protocol. */
   typingByChat: Record<Jid, boolean>;
   /** Update the received typing state for a chat. */
@@ -277,6 +284,20 @@ export const useAppStore = create<AppState>((set, get) => {
         .then((messages) => get().setMessages(chatId, messages))
         .catch((error) => console.error("list_messages failed", error));
     },
+
+    setMessageStatus: (chatId, messageId, status) =>
+      set((state) => {
+        const messages = state.messages[chatId];
+        if (!messages) return state;
+        return {
+          messages: {
+            ...state.messages,
+            [chatId]: messages.map((message) =>
+              message.id === messageId ? { ...message, status } : message,
+            ),
+          },
+        };
+      }),
 
     typingByChat: {},
 
