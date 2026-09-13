@@ -338,6 +338,30 @@ impl Store {
             .map_err(storage_error)
     }
 
+    /// Search message text, newest first. `%` and `_` are treated literally.
+    pub fn search_messages(&self, query: &str, limit: u32) -> Result<Vec<Message>> {
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, chat_id, sender_id, from_me, timestamp, kind, text, status
+                 FROM messages
+                 WHERE text LIKE ?1 ESCAPE '\\'
+                 ORDER BY timestamp DESC, rowid DESC
+                 LIMIT ?2",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![pattern, limit], row_to_message)
+            .map_err(storage_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(storage_error)
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
         self.connection
             .lock()

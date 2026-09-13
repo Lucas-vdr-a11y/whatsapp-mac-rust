@@ -166,6 +166,34 @@ fn push_names_replace_numeric_placeholders() {
 }
 
 #[test]
+fn searches_message_text_ignoring_like_wildcards() {
+    let store = Store::open_in_memory().expect("open store");
+    let chat_id = "alice@s.whatsapp.net";
+    store
+        .upsert_chat(&sample_chat(chat_id, "Alice", 10))
+        .unwrap();
+    store
+        .upsert_message(&sample_message("m1", chat_id, 10))
+        .unwrap();
+    // "message m1" from the fixture; add one with wildcard characters.
+    let mut tricky = sample_message("m2", chat_id, 20);
+    tricky.text = Some("100% done_now".to_owned());
+    store.upsert_message(&tricky).unwrap();
+
+    let hits = store.search_messages("message", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].id, "m1");
+
+    // A literal '%' must not act as a wildcard.
+    let hits = store.search_messages("100%", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].id, "m2");
+
+    let hits = store.search_messages("done_now", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+}
+
+#[test]
 fn opening_twice_is_idempotent() {
     // The same in-memory store cannot be reopened, but re-running migrations
     // on one connection must be a no-op. This guards the user_version logic.
