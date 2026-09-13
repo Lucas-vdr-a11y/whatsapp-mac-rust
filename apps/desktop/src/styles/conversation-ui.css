@@ -1,0 +1,592 @@
+/* Conversation surface: media bubbles, message menu, reactions, replies.
+ * Owned by the conversation-UI workstream. */
+
+/* ------------------------------------------------------------------ */
+/* Message layout                                                       */
+/* ------------------------------------------------------------------ */
+
+/* Bubbles + their reaction chips stack in a column so the chips can hang
+ * under the bubble while keeping the row's alignment (left/right). */
+.message-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  max-width: min(65%, 640px);
+}
+
+.message-row.out .message-stack {
+  align-items: flex-end;
+}
+
+.message-stack .bubble {
+  max-width: 100%;
+}
+
+.bubble-text {
+  white-space: pre-wrap;
+}
+
+/* ------------------------------------------------------------------ */
+/* Quoted context                                                       */
+/* ------------------------------------------------------------------ */
+
+.bubble-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 1px 0 5px;
+  padding: 5px 8px;
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  font-size: 13px;
+  line-height: 17px;
+  overflow: hidden;
+}
+
+.bubble.out .bubble-quote {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.quote-author {
+  color: var(--link);
+  font-weight: 500;
+}
+
+.quote-text {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------------------------ */
+/* Media bubbles                                                        */
+/* ------------------------------------------------------------------ */
+
+/* Tight padding so images/videos sit close to the bubble edge. */
+.bubble.media-bubble {
+  padding: 4px;
+}
+
+/* Stickers have no bubble chrome at all. */
+.bubble.media-plain {
+  background: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.bubble.media-plain::before {
+  display: none;
+}
+
+.media-card {
+  display: block;
+  padding: 0;
+  border-radius: var(--radius-bubble);
+  overflow: hidden;
+  line-height: 0;
+}
+
+.media-card img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(330px, 100%);
+  max-height: 250px;
+  object-fit: cover;
+}
+
+.media-card.sticker img {
+  max-width: min(160px, 100%);
+  max-height: 160px;
+}
+
+.media-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 260px;
+  max-width: 100%;
+  height: 170px;
+  border-radius: var(--radius-bubble);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.media-placeholder.sticker {
+  width: 160px;
+  height: 160px;
+}
+
+.media-placeholder:hover {
+  filter: brightness(1.08);
+}
+
+.media-placeholder.error {
+  color: var(--danger);
+}
+
+.media-caption {
+  padding: 5px 6px 3px;
+  font-size: var(--font-size-message);
+  line-height: 19px;
+  text-align: left;
+}
+
+/* Video tile -------------------------------------------------------- */
+
+.video-tile {
+  position: relative;
+  display: block;
+  width: 300px;
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-bubble);
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+}
+
+.video-tile.empty {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.video-tile.empty:hover {
+  filter: brightness(1.08);
+}
+
+.video-tile.error {
+  color: var(--danger);
+}
+
+.video-tile video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.video-glyph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.video-glyph > span {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+}
+
+.video-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+/* Voice notes ------------------------------------------------------- */
+
+.voice-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 240px;
+  padding: 2px;
+}
+
+.voice-play {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  color: var(--bubble-text);
+}
+
+.voice-play:hover {
+  background: var(--bg-hover);
+}
+
+.voice-play.error {
+  color: var(--danger);
+}
+
+.voice-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-mic {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.voice-wave {
+  flex: 1;
+  min-width: 110px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.voice-wave span {
+  flex: 1;
+  min-height: 3px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+.voice-wave span:nth-child(3n) {
+  opacity: 0.8;
+}
+
+.voice-duration {
+  flex: none;
+  min-width: 36px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.voice-duration.error {
+  color: var(--danger);
+}
+
+.voice-row audio {
+  display: none;
+}
+
+/* Audio / document file rows --------------------------------------- */
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 240px;
+  padding: 2px;
+}
+
+.file-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  color: var(--bubble-text);
+}
+
+.file-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file-name {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.file-action {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  color: var(--bubble-text);
+}
+
+.file-action:hover:not([disabled]) {
+  background: var(--bg-hover);
+}
+
+.file-action.done {
+  color: var(--accent);
+}
+
+.file-action.error {
+  color: var(--danger);
+}
+
+/* ------------------------------------------------------------------ */
+/* Reactions                                                            */
+/* ------------------------------------------------------------------ */
+
+.reaction-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: -4px;
+  padding: 2px 4px 0;
+}
+
+.message-row.out .reaction-bar {
+  justify-content: flex-end;
+}
+
+.reaction-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-full);
+  background: var(--bg-header);
+  box-shadow: var(--shadow-bubble);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.reaction-chip:hover {
+  background: var(--bg-hover);
+}
+
+.reaction-chip.mine {
+  border-color: var(--accent);
+}
+
+.reaction-emoji {
+  font-size: 14px;
+}
+
+.reaction-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+/* Deleted messages                                                     */
+/* ------------------------------------------------------------------ */
+
+.bubble.deleted {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.bubble.deleted .bubble-meta {
+  font-style: normal;
+}
+
+/* ------------------------------------------------------------------ */
+/* Message popover (quick reactions / delete choices)                   */
+/* ------------------------------------------------------------------ */
+
+.message-popover {
+  z-index: 1310;
+  min-width: 0;
+  padding: 6px;
+}
+
+.react-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.react-emoji {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  font-size: 22px;
+  line-height: 1;
+  transition: transform 80ms ease;
+}
+
+.react-emoji:hover {
+  background: var(--bg-hover);
+  transform: scale(1.12);
+}
+
+/* ------------------------------------------------------------------ */
+/* Lightbox                                                             */
+/* ------------------------------------------------------------------ */
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(0, 0, 0, 0.92);
+  cursor: zoom-out;
+}
+
+.lightbox-media {
+  max-width: min(92vw, 1200px);
+  max-height: 78vh;
+  border-radius: var(--radius-md);
+  object-fit: contain;
+}
+
+video.lightbox-media {
+  width: min(92vw, 960px);
+  max-height: 78vh;
+  cursor: default;
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  color: #fff;
+}
+
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.lightbox-caption {
+  max-width: 80vw;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ */
+/* Composer additions: reply/edit bar, column layout                    */
+/* ------------------------------------------------------------------ */
+
+.composer {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+}
+
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 16px;
+  min-height: var(--composer-height);
+}
+
+.composer .icon-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.composer-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 16px 0;
+  padding: 6px 8px;
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.composer-context.edit {
+  border-left-color: var(--tick-read);
+}
+
+.composer-context-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.composer-context-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--link);
+}
+
+.composer-context.edit .composer-context-title {
+  color: var(--tick-read);
+}
+
+.composer-context-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-context .icon-button {
+  width: 28px;
+  height: 28px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Shared spinner                                                       */
+/* ------------------------------------------------------------------ */
+
+.spin {
+  animation: rustwa-spin 900ms linear infinite;
+}
+
+@keyframes rustwa-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Shared focus ring for the new conversation controls                  */
+/* ------------------------------------------------------------------ */
+
+.media-card:focus-visible,
+.media-placeholder:focus-visible,
+.video-tile:focus-visible,
+.voice-play:focus-visible,
+.file-action:focus-visible,
+.reaction-chip:focus-visible,
+.react-emoji:focus-visible,
+.lightbox-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+

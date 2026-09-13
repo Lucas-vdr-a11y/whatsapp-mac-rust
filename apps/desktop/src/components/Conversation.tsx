@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { avatarSrc } from "../lib/avatar";
 import { initials } from "../lib/names";
-import { formatBubbleTime, formatDateDivider } from "../lib/time";
-import type { ChatSummary, Message, MessageStatus } from "../lib/types";
-import { useAppStore } from "../store/app";
+import { formatDateDivider } from "../lib/time";
+import type { ChatSummary, Message } from "../lib/types";
+import { useAppStore, type MessageQuote } from "../store/app";
 import { AttachmentMenu, type AttachmentKind } from "./AttachmentMenu";
 import { EmojiPicker } from "./EmojiPicker";
+import { MessageBubble } from "./message/MessageBubble";
 import {
   Check,
-  CheckCheck,
-  Clock,
   EllipsisVertical,
   MessageCircle,
   Mic,
@@ -19,6 +18,7 @@ import {
   Send,
   Smile,
   Video,
+  X,
 } from "./icons";
 
 const EMPTY_MESSAGES: Message[] = [];
@@ -35,13 +35,29 @@ export function Conversation({ chat }: ConversationProps) {
   const loadMessages = useAppStore((state) => state.loadMessages);
   const sendTyping = useAppStore((state) => state.sendTyping);
   const markRead = useAppStore((state) => state.markRead);
+  const replyTo = useAppStore((state) => state.replyTo);
+  const setReplyTo = useAppStore((state) => state.setReplyTo);
+  const editMessage = useAppStore((state) => state.editMessage);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastTypingSentAt = useRef(0);
   const typingActive = useRef(false);
 
+  // Inline edit target for the composer (own text messages only).
+  const [editing, setEditing] = useState<{
+    messageId: string;
+    text: string;
+  } | null>(null);
+
+  const activeReply = replyTo && replyTo.chatId === chat.id ? replyTo : null;
+
   useEffect(() => {
     loadMessages(chat.id);
   }, [chat.id, loadMessages]);
+
+  // Switching chats abandons any inline edit.
+  useEffect(() => {
+    setEditing(null);
+  }, [chat.id]);
 
   // Opening a visible conversation marks it as read.
   useEffect(() => {
@@ -71,15 +87,29 @@ export function Conversation({ chat }: ConversationProps) {
     }
   };
 
+  const startEditing = (message: Message) =>
+    setEditing({ messageId: message.id, text: message.text ?? "" });
+
+  const saveEdit = (text: string) => {
+    if (!editing) return;
+    editMessage(chat.id, editing.messageId, text);
+    setEditing(null);
+  };
+
   return (
     <section className="conversation">
       <ConversationHeader chat={chat} />
       <div className="messages" ref={scrollRef}>
-        {renderMessages(messages)}
+        {renderMessages(messages, chat, startEditing)}
       </div>
       <Composer
         onSend={(text) => sendText(chat.id, text)}
         onTyping={handleTyping}
+        replyTo={activeReply}
+        onCancelReply={() => setReplyTo(null)}
+        editing={editing}
+        onCancelEdit={() => setEditing(null)}
+        onSaveEdit={saveEdit}
       />
     </section>
   );
@@ -153,7 +183,11 @@ function ConversationAvatar({ chat }: { chat: ChatSummary }) {
   );
 }
 
-function renderMessages(messages: Message[]): ReactNode[] {
+function renderMessages(
+  messages: Message[],
+  chat: ChatSummary,
+  onEdit: (message: Message) => void,
+): ReactNode[] {
   const nodes: ReactNode[] = [];
   let previousDay = "";
 
@@ -178,7 +212,9 @@ function renderMessages(messages: Message[]): ReactNode[] {
       <MessageBubble
         key={message.id}
         message={message}
+        chat={chat}
         tail={isLastOfGroup}
+        onEdit={onEdit}
       />,
     );
   });
@@ -186,47 +222,25 @@ function renderMessages(messages: Message[]): ReactNode[] {
   return nodes;
 }
 
-function MessageBubble({ message, tail }: { message: Message; tail: boolean }) {
-  const classes = ["bubble"];
-  if (message.fromMe) classes.push("out");
-  if (tail) classes.push(message.fromMe ? "tail-out" : "tail-in");
-
-  return (
-    <div className={`message-row${message.fromMe ? " out" : ""}`}>
-      <div className={classes.join(" ")}>
-        {message.text}
-        <span className="bubble-meta">
-          {formatBubbleTime(message.timestamp)}
-          {message.fromMe && <StatusTick status={message.status} />}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function StatusTick({ status }: { status: MessageStatus }) {
-  switch (status) {
-    case "pending":
-      return <Clock size={14} />;
-    case "sent":
-      return <Check size={15} />;
-    case "failed":
-      return <Clock size={14} style={{ color: "var(--danger)" }} />;
-    case "read":
-    case "played":
-      return <CheckCheck size={15} className="tick-read" />;
-    default:
-      return <CheckCheck size={15} />;
-  }
+interface ComposerProps {
+  onSend: (text: string) => void;
+  onTyping: (hasText: boolean) => void;
+  replyTo: MessageQuote | null;
+  onCancelReply: () => void;
+  editing: { messageId: string; text: string } | null;
+  onCancelEdit: () => void;
+  onSaveEdit: (text: string) => void;
 }
 
 function Composer({
   onSend,
   onTyping,
-}: {
-  onSend: (text: string) => void;
-  onTyping: (hasText: boolean) => void;
-}) {
+  replyTo,
+  onCancelReply,
+  editing,
+  onCancelEdit,
+  onSaveEdit,
+}: ComposerProps) {
   const [text, setText] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
@@ -253,15 +267,51 @@ function Composer({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [emojiOpen, attachOpen]);
 
-  const submit = () => {
-    const value = text.trim();
-    if (!value) return;
-    onSend(value);
-    setText("");
-    onTyping(false);
+  // Entering edit mode loads the message into the composer.
+  useEffect(() => {
+    if (!editing) return;
+    setEmojiOpen(false);
+    setAttachOpen(false);
+    setText(editing.text);
+    requestAnimationFrame(() => {
+      const element = textareaRef.current;
+      element?.focus();
+      element?.setSelectionRange(element.value.length, element.value.length);
+      resize();
+    });
+  }, [editing]);
+
+  // Picking Reply moves focus straight to the input.
+  useEffect(() => {
+    if (replyTo) textareaRef.current?.focus();
+  }, [replyTo]);
+
+  const resetPanels = () => {
     setEmojiOpen(false);
     setAttachOpen(false);
     requestAnimationFrame(resize);
+  };
+
+  const submit = () => {
+    const value = text.trim();
+    if (!value) return;
+    if (editing) onSaveEdit(value);
+    else onSend(value);
+    setText("");
+    onTyping(false);
+    resetPanels();
+  };
+
+  const cancelEdit = () => {
+    onCancelEdit();
+    setText("");
+    onTyping(false);
+    resetPanels();
+  };
+
+  const cancelReply = () => {
+    onCancelReply();
+    textareaRef.current?.focus();
   };
 
   const insertEmoji = (emoji: string) => {
@@ -294,6 +344,8 @@ function Composer({
     setAttachOpen(false);
   };
 
+  const hasText = text.trim().length > 0;
+
   return (
     <footer className="composer" ref={composerRef}>
       {emojiOpen && (
@@ -309,59 +361,111 @@ function Composer({
         />
       )}
 
-      <button
-        type="button"
-        className="icon-button"
-        title="Emoji"
-        aria-expanded={emojiOpen}
-        onClick={toggleEmoji}
-      >
-        <Smile size={24} />
-      </button>
-      <button
-        type="button"
-        className="icon-button"
-        title="Attach"
-        aria-expanded={attachOpen}
-        onClick={toggleAttach}
-      >
-        <Paperclip size={24} />
-      </button>
+      {editing ? (
+        <div className="composer-context edit">
+          <div className="composer-context-body">
+            <span className="composer-context-title">Editing message</span>
+            <span className="composer-context-text">{editing.text}</span>
+          </div>
+          <button
+            type="button"
+            className="icon-button"
+            title="Cancel edit"
+            onClick={cancelEdit}
+          >
+            <X size={20} />
+          </button>
+        </div>
+      ) : replyTo ? (
+        <div className="composer-context">
+          <div className="composer-context-body">
+            <span className="composer-context-title">
+              {replyTo.senderName ?? "Reply"}
+            </span>
+            <span className="composer-context-text">{replyTo.preview}</span>
+          </div>
+          <button
+            type="button"
+            className="icon-button"
+            title="Cancel reply"
+            onClick={cancelReply}
+          >
+            <X size={20} />
+          </button>
+        </div>
+      ) : null}
 
-      <textarea
-        ref={textareaRef}
-        className="composer-input"
-        rows={1}
-        placeholder="Type a message"
-        value={text}
-        onChange={(event) => {
-          const value = event.target.value;
-          setText(value);
-          onTyping(value.trim().length > 0);
-          resize();
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            submit();
-          }
-        }}
-      />
-
-      {text.trim().length > 0 ? (
+      <div className="composer-row">
         <button
           type="button"
           className="icon-button"
-          title="Send"
-          onClick={submit}
+          title="Emoji"
+          aria-expanded={emojiOpen}
+          onClick={toggleEmoji}
         >
-          <Send size={24} />
+          <Smile size={24} />
         </button>
-      ) : (
-        <button type="button" className="icon-button" title="Voice message">
-          <Mic size={24} />
+        <button
+          type="button"
+          className="icon-button"
+          title="Attach"
+          aria-expanded={attachOpen}
+          onClick={toggleAttach}
+        >
+          <Paperclip size={24} />
         </button>
-      )}
+
+        <textarea
+          ref={textareaRef}
+          className="composer-input"
+          rows={1}
+          placeholder={editing ? "Edit message" : "Type a message"}
+          value={text}
+          onChange={(event) => {
+            const value = event.target.value;
+            setText(value);
+            onTyping(value.trim().length > 0);
+            resize();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              submit();
+              return;
+            }
+            if (event.key === "Escape" && (editing || replyTo)) {
+              event.preventDefault();
+              if (editing) cancelEdit();
+              else cancelReply();
+            }
+          }}
+        />
+
+        {editing ? (
+          <button
+            type="button"
+            className="icon-button"
+            title="Save edit"
+            disabled={!hasText}
+            onClick={submit}
+          >
+            <Check size={22} />
+          </button>
+        ) : hasText ? (
+          <button
+            type="button"
+            className="icon-button"
+            title="Send"
+            onClick={submit}
+          >
+            <Send size={24} />
+          </button>
+        ) : (
+          <button type="button" className="icon-button" title="Voice message">
+            <Mic size={24} />
+          </button>
+        )}
+      </div>
     </footer>
   );
 }

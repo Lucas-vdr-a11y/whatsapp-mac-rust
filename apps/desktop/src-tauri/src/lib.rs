@@ -4,15 +4,19 @@
 //! integrations and marshals commands / events between the webview and
 //! `whatsapp-core`. All business logic lives in the core crate.
 
+mod app_lock;
 mod commands_actions;
 mod commands_calls;
 mod commands_channels;
+mod commands_contacts;
 mod commands_groups;
 mod commands_media;
+mod deep_link;
 mod events;
 mod menu;
 mod platform;
 mod state;
+mod tray;
 
 use std::sync::Arc;
 
@@ -203,6 +207,11 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             app_info,
             core_connect,
@@ -217,6 +226,8 @@ pub fn run() {
             set_chat_archived,
             mark_chat_read,
             set_typing,
+            commands_contacts::contacts_resolve,
+            commands_contacts::contacts_avatar,
             commands_actions::actions_send_quoting,
             commands_actions::actions_react,
             commands_actions::actions_edit,
@@ -237,9 +248,16 @@ pub fn run() {
             commands_calls::calls_start,
             commands_calls::calls_end,
             platform::notify,
+            platform::notify_for_chat,
             platform::notification_permission,
             platform::set_badge,
-            platform::platform_capabilities
+            platform::platform_capabilities,
+            platform::autostart_enabled,
+            platform::set_autostart,
+            app_lock::set_app_lock,
+            app_lock::app_lock_enabled,
+            deep_link::open_link,
+            deep_link::deep_link_ready
         ])
         .setup(|app| {
             // Persistent state lives under the app data directory:
@@ -265,6 +283,10 @@ pub fn run() {
             // Native menu bar. `Preferences…` emits `ui://open-settings`.
             app.set_menu(menu::build(app.handle())?)?;
             app.on_menu_event(menu::on_event);
+
+            // Menu bar extra and `rustwa://` deep links.
+            tray::setup(app.handle())?;
+            deep_link::setup(app.handle());
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();

@@ -9,6 +9,11 @@
 //! `Preferences…` does not open a window itself: it emits the
 //! [`OPEN_SETTINGS_EVENT`] (`ui://open-settings`) Tauri event and the React UI
 //! decides what to present.
+//!
+//! This module is also the single router for the menu bar extra's menu
+//! (see [`crate::tray`]). Tauri dispatches menu events from every menu —
+//! window menus and tray menus alike — to the app-level listener installed in
+//! `lib.rs`, so the tray menu simply reuses the ids defined here.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -20,12 +25,25 @@ use tauri::{
     },
 };
 
-/// Event emitted when the user chooses "Preferences…" in the app menu.
+/// Event emitted when the user chooses "Preferences…" in the app menu or
+/// "Settings…" in the menu bar extra.
 ///
 /// Payload: `()`. The UI opens its settings surface on receipt.
 pub const OPEN_SETTINGS_EVENT: &str = "ui://open-settings";
 
-const PREFERENCES_ID: &str = "rustwa.menu.preferences";
+/// Event emitted when the user chooses "New chat" in the menu bar extra.
+///
+/// Payload: `()`. The UI should focus the chat list and start the new-chat
+/// flow.
+pub const NEW_CHAT_EVENT: &str = "ui://new-chat";
+
+pub(crate) const PREFERENCES_ID: &str = "rustwa.menu.preferences";
+/// Brings the main window to the front (menu bar extra only).
+pub(crate) const TRAY_OPEN_ID: &str = "rustwa.menu.open";
+/// Starts the new-chat flow (menu bar extra only for now).
+pub(crate) const NEW_CHAT_ID: &str = "rustwa.menu.new-chat";
+/// Quits the app through the regular shutdown path (menu bar extra only).
+pub(crate) const QUIT_ID: &str = "rustwa.menu.quit";
 const RELOAD_ID: &str = "rustwa.menu.view.reload";
 const FORCE_RELOAD_ID: &str = "rustwa.menu.view.force-reload";
 #[cfg(debug_assertions)]
@@ -180,6 +198,13 @@ pub fn on_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
                 tracing::warn!(%error, "failed to emit the open-settings event");
             }
         }
+        NEW_CHAT_ID => {
+            if let Err(error) = app.emit(NEW_CHAT_EVENT, ()) {
+                tracing::warn!(%error, "failed to emit the new-chat event");
+            }
+        }
+        TRAY_OPEN_ID => bring_all_to_front(app),
+        QUIT_ID => app.exit(0),
         RELOAD_ID | FORCE_RELOAD_ID => reload(app),
         #[cfg(debug_assertions)]
         DEVTOOLS_ID => {
@@ -229,7 +254,9 @@ fn apply_zoom<R: Runtime>(app: &AppHandle<R>, percent: u32) {
 /// AppKit's actual "Bring All to Front" (`NSApplication.arrangeInFront:`) is
 /// not exposed by Tauri. Showing and unminimizing each window and focusing the
 /// main one is the equivalent user-visible behaviour for this single-window app.
-fn bring_all_to_front<R: Runtime>(app: &AppHandle<R>) {
+///
+/// Also used for the menu bar extra's left-click activation.
+pub(crate) fn bring_all_to_front<R: Runtime>(app: &AppHandle<R>) {
     for window in app.webview_windows().values() {
         let _ = window.show();
         let _ = window.unminimize();

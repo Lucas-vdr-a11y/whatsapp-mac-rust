@@ -16,15 +16,23 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# The `tray-icon` feature powers the menu bar extra; `image-png` is not needed
+# because the tray glyph is generated in code as raw RGBA.
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-deep-link = "2"
 tauri-plugin-notification = "2"
-tauri-plugin-single-instance = "2"
+# The `deep-link` feature hands forwarded CLI arguments (second app instance on
+# Windows/Linux) to `tauri-plugin-deep-link` before running our callback.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-window-state = "2"
+percent-encoding = "2"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+url = "2"
 whatsapp-core = { path = "../../../crates/whatsapp-core" }
 
 [lints]

@@ -1,12 +1,15 @@
-//! Desktop platform integration: notifications, dock badge and capability
-//! reporting.
+//! Desktop platform integration: notifications, dock badge, login item and
+//! capability reporting.
 //!
 //! These commands are thin adapters over Tauri APIs and plugins; the UI calls
 //! them through `invoke` and adapts its affordances from
-//! [`platform_capabilities`].
+//! [`platform_capabilities`]. The menu bar extra lives in [`crate::tray`],
+//! deep links in [`crate::deep_link`] and the app-lock preference in
+//! [`crate::app_lock`].
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 
 /// Native features available in this build, so the UI can hide what the host
@@ -18,8 +21,15 @@ pub struct PlatformCapabilities {
     pub badge: bool,
     /// Desktop notifications through `tauri-plugin-notification`.
     pub notifications: bool,
-    /// Tray icon. Always `false` for now: the tray is not implemented.
+    /// Menu bar extra (`TrayIcon`); installed by [`crate::tray::setup`].
     pub tray: bool,
+    /// Login item toggling through `tauri-plugin-autostart`.
+    pub autostart: bool,
+    /// `rustwa://` links and the `wa.me` parser in [`crate::deep_link`].
+    pub deep_links: bool,
+    /// App-lock *preference storage*. The biometric unlock prompt is not
+    /// implemented yet, see [`crate::app_lock`].
+    pub app_lock: bool,
 }
 
 /// Reports which native integrations the UI can rely on.
@@ -33,7 +43,16 @@ pub fn platform_capabilities() -> PlatformCapabilities {
         // The notification plugin is compiled in on desktop and unused on
         // mobile, where this host does not run.
         notifications: true,
-        tray: false,
+        // `tauri/tray-icon` is enabled in Cargo.toml and the icon is always
+        // installed during setup; Linux needs a status area host, which the
+        // UI cannot detect from here.
+        tray: true,
+        // `tauri-plugin-autostart` is compiled for every desktop platform.
+        autostart: true,
+        // The deep-link plugin and `rustwa://` scheme are always registered.
+        deep_links: true,
+        // Storage exists everywhere; unlocking does not exist yet.
+        app_lock: true,
     }
 }
 
@@ -46,6 +65,70 @@ pub fn notify(app: AppHandle, title: String, body: String) -> Result<(), String>
         .body(body)
         .show()
         .map_err(|error| error.to_string())
+}
+
+/// Shows a desktop notification for a chat and tags it with the chat id.
+///
+/// Prefer this over [`notify`] for message notifications: the `chatId` extra
+/// travels in the notification payload and is the hook future click-through
+/// handling will read. The extra is currently only surfaced by the plugin on
+/// mobile; the desktop builder ignores it, which is why this command is
+/// otherwise identical to [`notify`].
+///
+/// # Limitation
+///
+/// `tauri-plugin-notification` does not deliver per-notification click events
+/// on desktop. macOS reports notification taps at the app level (activation),
+/// without telling the app *which* notification was clicked, so the UI cannot
+/// open the right chat from a click yet. Until a richer backend (for example a
+/// `UNUserNotificationCenter` delegate extension) lands, the UI should treat
+/// clicks as "focus the window" and keep the `chatId` extra as forward
+/// compatibility.
+#[tauri::command]
+pub fn notify_for_chat(
+    app: AppHandle,
+    chat_id: String,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .extra("chatId", &chat_id)
+        .show()
+        .map_err(|error| error.to_string())
+}
+
+/// Returns whether RustWA is registered as a login item.
+///
+/// Errors degrade to `false` (the UI should show the toggle as off and let the
+/// user retry), mirroring [`crate::app_lock::app_lock_enabled`].
+#[tauri::command]
+pub fn autostart_enabled(app: AppHandle) -> bool {
+    match app.autolaunch().is_enabled() {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            tracing::warn!(%error, "failed to query the login item state");
+            false
+        }
+    }
+}
+
+/// Enables or disables launching RustWA at login.
+///
+/// On macOS this writes a LaunchAgent (`MacosLauncher::LaunchAgent` passed at
+/// plugin init), which needs no user consent prompt; the entry shows up under
+/// System Settings → General → Login Items.
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let manager = app.autolaunch();
+    let result = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    result.map_err(|error| error.to_string())
 }
 
 /// Returns whether notifications are allowed, requesting permission when the

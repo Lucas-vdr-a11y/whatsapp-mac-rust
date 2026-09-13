@@ -1,7 +1,7 @@
 /** Bridges core events from the Rust host into the UI store. */
 
 import { useCallback, useEffect, useRef } from "react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invokeCore, isTauri, listenCore } from "./ipc";
 import type { ChatSummary } from "./types";
 import { useAppStore } from "../store/app";
@@ -28,11 +28,43 @@ export function useCoreBridge(): void {
 
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
+    let unlistenOpenChat: UnlistenFn | null = null;
     let cancelled = false;
 
     // A session that survives a restart reconnects without a QR scan; the
     // chat list may already be on disk.
     void hydrateChats();
+
+    /** Open a chat from a deep link, creating it locally when unknown. */
+    const openChat = (chatId: string) => {
+      const store = useAppStore.getState();
+      if (store.chats.some((chat) => chat.id === chatId)) {
+        store.selectChat(chatId);
+      } else {
+        store.startChat(chatId, chatId.split("@")[0] ?? chatId);
+      }
+    };
+
+    // `rustwa://chat/<jid>` deep links, delivered while the app runs.
+    void listen<{ chatId: string }>("ui://open-chat", (event) => {
+      const chatId = event.payload?.chatId;
+      if (chatId) openChat(chatId);
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlistenOpenChat = fn;
+      }
+    });
+
+    // A deep link that arrived before the UI mounted (cold start).
+    void invokeCore<string | null>("deep_link_ready")
+      .then((chatId) => {
+        if (chatId && !cancelled) openChat(chatId);
+      })
+      .catch(() => {
+        // Deep links may be unavailable (older build, browser mode).
+      });
 
     listenCore((event) => {
       switch (event.type) {
@@ -102,11 +134,17 @@ export function useCoreBridge(): void {
             const chat = useAppStore
               .getState()
               .chats.find((candidate) => candidate.id === message.chatId);
-            void invokeCore("notify", {
-              title: chat?.name ?? "New message",
-              body: message.text ?? "[Media]",
+            const title = chat?.name ?? "New message";
+            const body = message.text ?? "[Media]";
+            void invokeCore("notify_for_chat", {
+              chatId: message.chatId,
+              title,
+              body,
             }).catch(() => {
-              // Notification delivery is not critical; ignore failures.
+              // Fall back to the plain notification on older builds.
+              void invokeCore("notify", { title, body }).catch(() => {
+                // Notification delivery is not critical; ignore failures.
+              });
             });
           }
           break;
@@ -127,6 +165,7 @@ export function useCoreBridge(): void {
     return () => {
       cancelled = true;
       unlisten?.();
+      unlistenOpenChat?.();
       if (hydrateTimer.current !== null) {
         window.clearTimeout(hydrateTimer.current);
         hydrateTimer.current = null;

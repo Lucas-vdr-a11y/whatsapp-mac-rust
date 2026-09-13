@@ -7,11 +7,29 @@ import type {
   ConnectionState,
   Jid,
   Message,
+  MessageKind,
   MessageStatus,
 } from "../lib/types";
 import { MOCK_CHATS, MOCK_MESSAGES } from "../mocks/data";
 
 export type ChatFilter = "all" | "unread" | "groups";
+
+/** Media metadata as reported by the core's `media_download` command. */
+export interface MediaInfo {
+  path: string;
+  mime: string;
+  fileName: string;
+  size: number;
+}
+
+/** Quoted context: either the composer's reply target or a locally captured
+ * quote for one of our outgoing messages. */
+export interface MessageQuote {
+  chatId: Jid;
+  messageId: string;
+  preview: string;
+  senderName?: string;
+}
 
 interface AppState {
   chats: ChatSummary[];
@@ -41,6 +59,48 @@ interface AppState {
   setFilter: (filter: ChatFilter) => void;
   appendMessage: (message: Message) => void;
   sendText: (chatId: Jid, text: string) => void;
+
+  /** Message being replied to in the composer, if any. */
+  replyTo: MessageQuote | null;
+  /** Set (or clear) the active reply target. */
+  setReplyTo: (reply: MessageQuote | null) => void;
+  /** Quoted context captured locally for outgoing messages by message id.
+   * `Message` carries no quote field yet, so server-echoed quotes cannot be
+   * decoded; this map only backs our own local echo. */
+  quotes: Record<string, MessageQuote>;
+
+  /** Local file path per message id once media has been resolved. */
+  mediaPaths: Record<string, string>;
+  /** Media metadata per message id once media has been resolved. */
+  mediaMeta: Record<string, MediaInfo>;
+  /** Resolve (and cache) the local file for a message (`media_download`). */
+  downloadMedia: (messageId: string, kind: MessageKind) => Promise<MediaInfo>;
+
+  /** Reaction counts per message id, emoji -> count. */
+  reactions: Record<string, Record<string, number>>;
+  /** Our own current reaction per message id. Optimistic until the protocol
+   * exposes incoming reaction summaries. */
+  myReactions: Record<string, string | null>;
+  /** Toggle our reaction; picking the emoji we already used clears it. */
+  toggleReaction: (
+    chatId: Jid,
+    messageId: string,
+    emoji: string,
+    fromMe: boolean,
+  ) => void;
+
+  /** Locally revoked (deleted) message ids. */
+  deletedMessages: Record<string, true>;
+  /** Revoke a message for everyone or just for this device (`actions_revoke`). */
+  revokeMessage: (chatId: Jid, messageId: string, forEveryone: boolean) => void;
+
+  /** Starred message ids. */
+  starred: Record<string, true>;
+  /** Toggle the starred state of a message (`actions_star`). */
+  toggleStar: (chatId: Jid, messageId: string, fromMe: boolean) => void;
+
+  /** Rewrite one of our own text messages (`actions_edit`). */
+  editMessage: (chatId: Jid, messageId: string, text: string) => void;
 
   /** Local, in-memory chat-list mutations (persistence lands with the core). */
   togglePinned: (id: Jid) => void;
@@ -114,6 +174,15 @@ export const useAppStore = create<AppState>((set, get) => {
     pairingExpired: false,
     pairCode: null,
 
+    replyTo: null,
+    quotes: {},
+    mediaPaths: {},
+    mediaMeta: {},
+    reactions: {},
+    myReactions: {},
+    deletedMessages: {},
+    starred: {},
+
     selectChat: (id) => set({ selectedChatId: id }),
     setQuery: (query) => set({ query }),
     setFilter: (filter) => set({ filter }),
@@ -134,6 +203,9 @@ export const useAppStore = create<AppState>((set, get) => {
       const trimmed = text.trim();
       if (!trimmed) return;
 
+      const replyTo = get().replyTo;
+      const activeReply = replyTo && replyTo.chatId === chatId ? replyTo : null;
+
       // Optimistic local echo, reconciled with the stored message when the
       // core acknowledges the send.
       const optimistic: Message = {
@@ -148,21 +220,46 @@ export const useAppStore = create<AppState>((set, get) => {
       };
       get().appendMessage(optimistic);
 
+      // `Message` has no quote field yet: remember the quoted preview locally
+      // so the echo can render it, and clear the composer's reply target.
+      set((state) => ({
+        quotes: activeReply
+          ? { ...state.quotes, [optimistic.id]: activeReply }
+          : state.quotes,
+        replyTo: activeReply ? null : state.replyTo,
+      }));
+
       if (!isTauri()) return;
 
-      void invokeCore<Message>("send_text", { chatId, text: trimmed })
+      const args: Record<string, unknown> = { chatId, text: trimmed };
+      if (activeReply) args.quotedMessageId = activeReply.messageId;
+
+      void invokeCore<Message>(
+        activeReply ? "actions_send_quoting" : "send_text",
+        args,
+      )
         .then((stored) => {
-          set((state) => ({
-            messages: {
-              ...state.messages,
-              [chatId]: (state.messages[chatId] ?? []).map((message) =>
-                message.id === optimistic.id ? stored : message,
-              ),
-            },
-          }));
+          set((state) => {
+            // Move the locally captured quote over to the stored message id.
+            const quotes = { ...state.quotes };
+            const localQuote = quotes[optimistic.id];
+            if (localQuote) {
+              quotes[stored.id] = localQuote;
+              delete quotes[optimistic.id];
+            }
+            return {
+              quotes,
+              messages: {
+                ...state.messages,
+                [chatId]: (state.messages[chatId] ?? []).map((message) =>
+                  message.id === optimistic.id ? stored : message,
+                ),
+              },
+            };
+          });
         })
         .catch((error) => {
-          console.error("send_text failed", error);
+          console.error("send message failed", error);
           set((state) => ({
             messages: {
               ...state.messages,
@@ -174,6 +271,139 @@ export const useAppStore = create<AppState>((set, get) => {
             },
           }));
         });
+    },
+
+    setReplyTo: (reply) => set({ replyTo: reply }),
+
+    downloadMedia: async (messageId, kind) => {
+      const cached = get().mediaMeta[messageId];
+      if (cached) return cached;
+
+      if (!isTauri()) {
+        // Browser mock mode: synthesize a small inline preview so that media
+        // bubbles can be exercised without the Rust host. Kinds we cannot
+        // fake surface a retry state in the UI instead.
+        const mock = mockMediaInfo(messageId, kind);
+        if (!mock) {
+          throw new Error("Media is only available in the desktop app");
+        }
+        set((state) => ({
+          mediaPaths: { ...state.mediaPaths, [messageId]: mock.path },
+          mediaMeta: { ...state.mediaMeta, [messageId]: mock },
+        }));
+        return mock;
+      }
+
+      const info = await invokeCore<MediaInfo>("media_download", { messageId });
+      set((state) => ({
+        mediaPaths: { ...state.mediaPaths, [messageId]: info.path },
+        mediaMeta: { ...state.mediaMeta, [messageId]: info },
+      }));
+      return info;
+    },
+
+    toggleReaction: (chatId, messageId, emoji, fromMe) => {
+      const state = get();
+      const previous = state.myReactions[messageId] ?? null;
+      const clearing = previous === emoji;
+      const counts = { ...(state.reactions[messageId] ?? {}) };
+
+      const adjust = (target: string, delta: number) => {
+        const next = (counts[target] ?? 0) + delta;
+        if (next > 0) counts[target] = next;
+        else delete counts[target];
+      };
+
+      if (clearing) {
+        adjust(emoji, -1);
+      } else {
+        if (previous) adjust(previous, -1);
+        adjust(emoji, 1);
+      }
+
+      set((current) => ({
+        reactions: { ...current.reactions, [messageId]: counts },
+        myReactions: {
+          ...current.myReactions,
+          [messageId]: clearing ? null : emoji,
+        },
+      }));
+
+      if (!isTauri()) return;
+      // An empty emoji clears our reaction per the IPC contract.
+      void invokeCore("actions_react", {
+        chatId,
+        messageId,
+        emoji: clearing ? "" : emoji,
+        fromMe,
+      }).catch((error) => console.error("actions_react failed", error));
+    },
+
+    revokeMessage: (chatId, messageId, forEveryone) => {
+      set((state) => ({
+        deletedMessages: { ...state.deletedMessages, [messageId]: true },
+      }));
+      if (!isTauri()) return;
+      void invokeCore("actions_revoke", {
+        chatId,
+        messageId,
+        forEveryone,
+      }).catch((error) => console.error("actions_revoke failed", error));
+    },
+
+    toggleStar: (chatId, messageId, fromMe) => {
+      const star = !get().starred[messageId];
+      set((state) => {
+        const starred = { ...state.starred };
+        if (star) starred[messageId] = true;
+        else delete starred[messageId];
+        return { starred };
+      });
+      if (!isTauri()) return;
+      void invokeCore("actions_star", {
+        chatId,
+        messageId,
+        fromMe,
+        star,
+      }).catch((error) => console.error("actions_star failed", error));
+    },
+
+    editMessage: (chatId, messageId, text) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      const previous =
+        get().messages[chatId]?.find((message) => message.id === messageId)
+          ?.text ?? null;
+
+      set((state) => ({
+        messages: {
+          ...state.messages,
+          [chatId]: (state.messages[chatId] ?? []).map((message) =>
+            message.id === messageId ? { ...message, text: trimmed } : message,
+          ),
+        },
+      }));
+
+      if (!isTauri()) return;
+      void invokeCore("actions_edit", {
+        chatId,
+        messageId,
+        text: trimmed,
+      }).catch((error) => {
+        console.error("actions_edit failed", error);
+        // Put the original text back rather than leave a lie on screen.
+        set((state) => ({
+          messages: {
+            ...state.messages,
+            [chatId]: (state.messages[chatId] ?? []).map((message) =>
+              message.id === messageId
+                ? { ...message, text: previous }
+                : message,
+            ),
+          },
+        }));
+      });
     },
 
     togglePinned: (id) => {
@@ -339,6 +569,38 @@ export const useAppStore = create<AppState>((set, get) => {
     },
   };
 });
+
+/** Browser preview stand-in for `media_download`. Returns an inline SVG only
+ * for still-image kinds; animated video/audio remain unavailable in the
+ * browser and are reported through the UI's retry state. */
+function mockMediaInfo(messageId: string, kind: MessageKind): MediaInfo | null {
+  if (kind !== "image" && kind !== "sticker" && kind !== "gif") return null;
+
+  let hash = 0;
+  for (let index = 0; index < messageId.length; index += 1) {
+    hash = (hash * 31 + messageId.charCodeAt(index)) | 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  const title = kind === "sticker" ? "Sticker" : "Photo";
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420">` +
+    `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">` +
+    `<stop offset="0" stop-color="hsl(${hue} 55% 42%)"/>` +
+    `<stop offset="1" stop-color="hsl(${(hue + 60) % 360} 55% 22%)"/>` +
+    `</linearGradient></defs>` +
+    `<rect width="640" height="420" fill="url(#g)"/>` +
+    `<text x="320" y="214" font-family="-apple-system, sans-serif" font-size="26" ` +
+    `fill="rgba(255,255,255,0.88)" text-anchor="middle">${title} preview</text>` +
+    `<text x="320" y="248" font-family="-apple-system, sans-serif" font-size="15" ` +
+    `fill="rgba(255,255,255,0.6)" text-anchor="middle">browser mock mode</text></svg>`;
+
+  return {
+    path: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+    mime: "image/svg+xml",
+    fileName: `${kind}-preview.svg`,
+    size: svg.length,
+  };
+}
 
 /** Chats after applying the search query and the active filter. */
 export function selectVisibleChats(state: AppState): ChatSummary[] {
