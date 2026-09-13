@@ -87,6 +87,17 @@ See subagent report (session log). Key file:line refs preserved in the findings 
 
 **Structural fix:** every chat-list writer must (a) resolve `canonical_jid()` and (b) upsert-or-defer instead of bare UPDATE; plus full `regular` app-state sync on connect.
 
+## UI reference details (official app, captured for repair E)
+
+- jacques Opa conversation holds months of history (29-03 → 13-09) with localized date
+  separators ("di 23 jun", "Gisteren"); outgoing messages show blue double-checks; a link
+  preview renders as a card with "Meer informatie"; messages bottom-anchored; floating
+  scroll-to-bottom button; composer = [+ attachment] [placeholder "Stel bericht op"]
+  [emoji] [mic].
+- Chat-list timestamps are relative: "Gisteren" for yesterday, weekday for this week,
+  dd-mm-yy older. Unread badge clears immediately when the chat is opened (rail badge 10→9).
+- Conversation header: avatar + name only (no subtitle text).
+
 ## Status / repair plan
 
 - [x] Audit complete (this doc)
