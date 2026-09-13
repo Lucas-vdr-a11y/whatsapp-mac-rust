@@ -1,4 +1,8 @@
-/* Component styles. Section order: rail, chat list, conversation, composer. */
+/* Component styles. Section order: rail, chat list, conversation, composer.
+ *
+ * Metrics and colors follow the official macOS client: 67px rail with 48px
+ * buttons, 368px chat list with 68.5px rows, 52px conversation header and
+ * composer, 8px bubbles with tail on the last message of a group. */
 
 /* ------------------------------------------------------------------ */
 /* macOS window chrome                                                  */
@@ -19,34 +23,43 @@
   flex-direction: column;
   align-items: center;
   background: var(--bg-rail);
-  border-right: 1px solid var(--divider);
   height: 100%;
-  padding-bottom: 8px;
+  padding-bottom: 10px;
 }
 
 .rail-nav {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 4px;
   width: 100%;
+}
+
+.rail > .rail-nav:first-of-type {
+  margin-top: 16px;
+}
+
+.rail-divider {
+  flex: none;
+  width: 33px;
+  height: 1px;
+  margin: 8px 0;
+  background: var(--divider);
 }
 
 .rail-button {
   position: relative;
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   display: grid;
   place-items: center;
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--icon);
   transition: background 120ms ease, color 120ms ease;
 }
 
 .rail-button:hover {
   background: var(--bg-hover);
-  color: var(--icon-strong);
 }
 
 .rail-button.active {
@@ -54,25 +67,40 @@
   color: var(--icon-strong);
 }
 
+.rail-nav--bottom .rail-button {
+  width: var(--rail-width);
+  border-radius: 0;
+}
+
 .rail-button .badge {
   position: absolute;
-  top: -2px;
-  right: -2px;
-  min-width: 18px;
-  height: 18px;
+  top: 2px;
+  right: 4px;
+  min-width: 20px;
+  height: 20px;
   padding: 0 5px;
-  border-radius: 9px;
+  border-radius: 999px;
   background: var(--unread-badge);
   color: var(--unread-badge-text);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 18px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
   text-align: center;
-  box-shadow: 0 0 0 2px var(--bg-rail);
+}
+
+/* The archived count is green text, not a filled pill. */
+.rail-button .count {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .rail-spacer {
   flex: 1;
+  margin-bottom: 6px;
 }
 
 /* ------------------------------------------------------------------ */
@@ -83,24 +111,24 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--bg-panel);
-  border-right: 1px solid var(--divider);
   height: 100%;
+  background: var(--bg-panel);
 }
 
 .chat-list-header {
-  height: var(--header-height);
+  height: 48px;
   flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px 0 22px;
+  padding: 0 10px 0 21px;
 }
 
 .chat-list-title {
   font-size: var(--font-size-chat-title);
-  font-weight: 700;
-  letter-spacing: -0.2px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+  color: var(--text-title);
 }
 
 .chat-list-title-group {
@@ -114,6 +142,13 @@
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.chat-list-header .icon-button {
+  width: 33px;
+  height: 32px;
+  border-radius: 6px;
+  color: var(--icon-muted);
 }
 
 .icon-button {
@@ -131,26 +166,33 @@
   color: var(--icon-strong);
 }
 
+/* Search + filters ------------------------------------------------- */
+
 .search-row {
-  padding: 0 12px 10px;
   flex: none;
+  padding: 0 10px 0 9px;
 }
 
 .search-box {
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 35px;
-  padding: 0 12px;
+  gap: 9px;
+  height: 32px;
+  padding: 0 10px;
   background: var(--bg-input);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
+  border: 1px solid var(--search-border);
+  border-radius: 10px;
+  color: var(--icon-muted);
+}
+
+.search-box svg {
+  flex: none;
 }
 
 .search-box input {
   flex: 1;
   min-width: 0;
-  font-size: 15px;
+  font-size: 14px;
   color: var(--text-primary);
 }
 
@@ -160,22 +202,36 @@
 
 .filters {
   display: flex;
-  gap: 8px;
-  padding: 0 12px 10px;
+  gap: 6px;
   flex: none;
+  padding: 10px 10px 22px 17px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.filters::-webkit-scrollbar {
+  display: none;
 }
 
 .filter-pill {
-  height: 24px;
-  padding: 0 12px;
-  border-radius: var(--radius-full);
+  flex: none;
+  height: 29px;
+  padding: 0 14px;
+  border: 1px solid var(--pill-border);
+  border-radius: 999px;
+  background: var(--bg-panel);
   font-size: 13px;
   color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.filter-pill:hover {
   background: var(--bg-hover);
 }
 
 .filter-pill.active {
-  background: rgba(0, 168, 132, 0.18);
+  border-color: transparent;
+  background: var(--bubble-out);
   color: var(--accent-strong);
 }
 
@@ -189,9 +245,9 @@
 .chat-item {
   display: flex;
   align-items: center;
-  gap: 15px;
-  height: 72px;
-  padding: 0 12px 0 16px;
+  gap: 11px;
+  height: 68.5px;
+  padding: 0 21px 0 17px;
   cursor: default;
 }
 
@@ -205,8 +261,8 @@
 
 .avatar {
   flex: none;
-  width: 49px;
-  height: 49px;
+  width: 48px;
+  height: 48px;
   border-radius: var(--radius-full);
   background: #6a7175;
   color: #fff;
@@ -235,9 +291,8 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 4px;
+  gap: 1px;
   height: 100%;
-  padding: 12px 0;
 }
 
 .chat-item-top,
@@ -246,12 +301,14 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
+  line-height: 19px;
 }
 
 .chat-item-name {
   flex: 1;
   min-width: 0;
   font-size: var(--font-size-list-name);
+  font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -265,7 +322,7 @@
 }
 
 .chat-item-time.unread {
-  color: var(--accent-strong);
+  color: var(--accent);
 }
 
 .chat-item-preview {
@@ -295,7 +352,7 @@
   background: var(--unread-badge);
   color: var(--unread-badge-text);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 20px;
   text-align: center;
 }
@@ -388,10 +445,27 @@
   height: var(--header-height);
   display: flex;
   align-items: center;
-  gap: 15px;
-  padding: 0 16px;
+  gap: 11px;
+  padding: 0 10px 0 21px;
   background: var(--bg-header);
-  border-bottom: 1px solid var(--divider);
+  border-bottom: 1px solid var(--header-border);
+}
+
+.conversation-header .avatar.small {
+  width: 42px;
+  height: 42px;
+  font-size: 17px;
+}
+
+.conversation-header .header-actions {
+  gap: 8px;
+}
+
+.conversation-header .icon-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--icon-muted);
 }
 
 .conversation-title {
@@ -403,8 +477,9 @@
 }
 
 .conversation-name {
-  font-size: 16px;
-  font-weight: 500;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text-header);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -412,7 +487,7 @@
 
 .conversation-subtitle {
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--text-header-subtle);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -429,15 +504,30 @@
   gap: 2px;
 }
 
+/* Quiet status row shown while a page of older messages is being fetched. */
+.messages-loading-older {
+  align-self: center;
+  margin: 6px 0 10px;
+  padding: 4px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-size: 12px;
+  box-shadow: var(--shadow-bubble);
+}
+
 .date-divider {
   align-self: center;
   margin: 12px 0;
   padding: 5px 12px;
   border-radius: var(--radius-md);
-  background: var(--bg-header);
+  background: var(--bg-panel);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.4px;
   text-transform: uppercase;
+  box-shadow: var(--shadow-bubble);
 }
 
 .system-message {
@@ -445,7 +535,7 @@
   margin: 4px 0;
   padding: 5px 12px;
   border-radius: var(--radius-md);
-  background: var(--bg-header);
+  background: var(--bg-panel);
   color: var(--text-secondary);
   font-size: 12.5px;
   max-width: 70%;
@@ -464,7 +554,7 @@
 .bubble {
   position: relative;
   max-width: min(65%, 640px);
-  padding: 6px 9px 8px;
+  padding: 6px 12px 8px;
   border-radius: var(--radius-bubble);
   background: var(--bubble-in);
   color: var(--bubble-text);
@@ -479,27 +569,44 @@
   background: var(--bubble-out);
 }
 
-/* Bubble tails, approximated with CSS triangles. */
+/* Bubble tails. The official client tails the last message of a group and
+ * squares the shared corner on the messages in between. */
+.bubble.tail-in {
+  border-bottom-left-radius: 0;
+}
+
+.bubble.tail-out {
+  border-bottom-right-radius: 0;
+}
+
 .bubble.tail-in::before {
   content: "";
   position: absolute;
-  left: -8px;
+  left: -7px;
   bottom: 0;
-  width: 8px;
+  width: 7px;
   height: 13px;
   background: var(--bubble-in);
-  clip-path: polygon(100% 0, 0 100%, 100% 100%);
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
 }
 
 .bubble.tail-out::before {
   content: "";
   position: absolute;
-  right: -8px;
+  right: -7px;
   bottom: 0;
-  width: 8px;
+  width: 7px;
   height: 13px;
   background: var(--bubble-out);
   clip-path: polygon(0 0, 100% 100%, 0 100%);
+}
+
+.bubble.mid-in {
+  border-bottom-left-radius: 0;
+}
+
+.bubble.mid-out {
+  border-bottom-right-radius: 0;
 }
 
 .bubble-meta {
@@ -507,18 +614,18 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  margin: 7px -3px -5px 8px;
-  font-size: var(--font-size-time);
+  margin: 7px -4px -6px 8px;
+  font-size: 11px;
   color: var(--text-secondary);
   line-height: 15px;
 }
 
 .bubble.out .bubble-meta {
-  color: rgba(233, 237, 239, 0.6);
+  color: rgba(0, 0, 0, 0.55);
 }
 
-:root[data-theme="light"] .bubble.out .bubble-meta {
-  color: rgba(17, 27, 33, 0.6);
+:root[data-theme="dark"] .bubble.out .bubble-meta {
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .bubble-meta .tick-read {
@@ -533,32 +640,74 @@
   flex: none;
   min-height: var(--composer-height);
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 8px 16px;
-  background: var(--bg-header);
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 12px;
+  background: var(--bg-chat);
 }
 
 .composer .icon-button {
   flex: none;
-  margin-bottom: 1px;
+  width: 32px;
+  height: 32px;
+  color: var(--text-primary);
+}
+
+.composer-pill {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--composer-border);
+  border-radius: 16px;
+  background: var(--bg-input);
+}
+
+.composer-pill:focus-within {
+  border-color: var(--search-border);
+}
+
+.composer-pill .icon-button {
+  width: 30px;
+  height: 30px;
+  margin-bottom: 0;
+  color: var(--icon-muted);
 }
 
 .composer-input {
   flex: 1;
   min-width: 0;
-  min-height: 42px;
+  min-height: 30px;
   max-height: 120px;
-  padding: 11px 12px;
-  border-radius: var(--radius-md);
-  background: var(--bg-input);
-  font-size: 15px;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
   line-height: 20px;
   resize: none;
 }
 
 .composer-input::placeholder {
   color: var(--text-secondary);
+}
+
+/* Voice/send action: circular green button on the right. */
+.composer-action {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: #fff;
+}
+
+.composer-action:hover {
+  filter: brightness(1.06);
 }
 
 /* ------------------------------------------------------------------ */
@@ -619,6 +768,26 @@
   background: #ffffff;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
   line-height: 0;
+}
+
+/* Shown while the core has not produced a QR yet; the mock payload is never
+ * rendered inside the desktop app. */
+.qr-pending {
+  width: 280px;
+  height: 280px;
+  border-radius: 8px;
+  background: #f2f2f2;
+  animation: qr-pending-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes qr-pending-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 
 .pairing-status {
@@ -736,50 +905,47 @@
 /* Empty state                                                          */
 /* ------------------------------------------------------------------ */
 
-.empty-conversation {
-  flex: 1;
+/* Empty right panel: the bubble mark + wordmark on the rail gray, with the
+ * encryption footer pinned near the bottom edge. */
+.conversation.empty-conversation {
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-rail);
+}
+
+.empty-center {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 16px;
-  padding: 0 10%;
-  text-align: center;
+  gap: 2px;
 }
 
-.empty-conversation .empty-logo {
-  width: 96px;
-  height: 96px;
-  border-radius: var(--radius-full);
-  display: grid;
-  place-items: center;
-  color: var(--text-secondary);
-  background: var(--bg-header);
+.empty-mark {
+  color: var(--empty-mark);
 }
 
 .empty-conversation h2 {
-  margin: 24px 0 0;
-  font-size: 32px;
-  font-weight: 300;
-  color: var(--text-primary);
-}
-
-.empty-conversation p {
   margin: 0;
-  max-width: 460px;
-  font-size: 14px;
-  line-height: 20px;
-  color: var(--text-secondary);
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.6px;
+  color: var(--empty-mark);
 }
 
 .empty-conversation .empty-footer {
   position: absolute;
-  bottom: 40px;
+  bottom: 64px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--empty-mark);
+}
+
+.empty-footer-link {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1059,12 +1225,14 @@
   }
 }
 
-/* Conversation wallpaper: an original doodle tile, theme-aware via a mask. */
+/* Conversation wallpaper: an original large-doodle tile, theme-aware via a
+ * mask. Sized in the same scale as the official client (~one doodle per
+ * 150-250px) and drawn only behind the message list. */
 .conversation {
   position: relative;
 }
 
-.conversation::before {
+.conversation:not(.empty-conversation)::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -1072,9 +1240,11 @@
   background-color: var(--doodle);
   -webkit-mask-image: url("../assets/doodle.svg");
   mask-image: url("../assets/doodle.svg");
-  -webkit-mask-size: 190px 190px;
-  mask-size: 190px 190px;
-  opacity: 0.35;
+  -webkit-mask-size: 1800px 1800px;
+  mask-size: 1800px 1800px;
+  -webkit-mask-repeat: repeat;
+  mask-repeat: repeat;
+  opacity: 0.9;
 }
 
 .conversation > * {

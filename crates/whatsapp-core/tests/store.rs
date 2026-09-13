@@ -14,6 +14,7 @@ fn sample_chat(id: &str, name: &str, ts: u64) -> ChatSummary {
         is_group: false,
         is_archived: false,
         last_message_kind: None,
+        last_status: None,
         last_from_me: false,
     }
 }
@@ -96,6 +97,87 @@ fn messages_roundtrip_in_chronological_order() {
     assert_eq!(ids, vec!["m1", "m2", "m3"]);
     assert_eq!(messages[0].kind, MessageKind::Text);
     assert_eq!(messages[0].status, MessageStatus::Delivered);
+}
+
+#[test]
+fn older_pages_walk_backwards_without_gaps_or_overlap() {
+    let store = Store::open_in_memory().expect("open store");
+    let chat_id = "alice@s.whatsapp.net";
+    store
+        .upsert_chat(&sample_chat(chat_id, "Alice", 50))
+        .unwrap();
+    for (id, ts) in [("m1", 10), ("m2", 20), ("m3", 30), ("m4", 40), ("m5", 50)] {
+        store
+            .upsert_message(&sample_message(id, chat_id, ts))
+            .unwrap();
+    }
+
+    // Newest page first (oldest of the page in front), then walk back.
+    let page = store.list_messages(&Jid::new(chat_id), 2).unwrap();
+    let ids: Vec<&str> = page.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["m4", "m5"]);
+
+    let older = store.messages_before(&Jid::new(chat_id), "m4", 2).unwrap();
+    let ids: Vec<&str> = older.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["m2", "m3"]);
+
+    let rest = store.messages_before(&Jid::new(chat_id), "m2", 2).unwrap();
+    let ids: Vec<&str> = rest.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["m1"]);
+
+    assert!(
+        store
+            .messages_before(&Jid::new(chat_id), "m1", 2)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn older_pages_stay_consistent_for_equal_timestamps() {
+    let store = Store::open_in_memory().expect("open store");
+    let chat_id = "alice@s.whatsapp.net";
+    store
+        .upsert_chat(&sample_chat(chat_id, "Alice", 20))
+        .unwrap();
+    for id in ["a", "b", "c", "d"] {
+        store
+            .upsert_message(&sample_message(id, chat_id, 20))
+            .unwrap();
+    }
+
+    let page = store.list_messages(&Jid::new(chat_id), 2).unwrap();
+    let ids: Vec<&str> = page.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["c", "d"]);
+
+    let older = store.messages_before(&Jid::new(chat_id), "c", 2).unwrap();
+    let ids: Vec<&str> = older.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["a", "b"]);
+}
+
+#[test]
+fn oldest_message_reports_the_history_anchor() {
+    let store = Store::open_in_memory().expect("open store");
+    let chat_id = "alice@s.whatsapp.net";
+    store
+        .upsert_chat(&sample_chat(chat_id, "Alice", 30))
+        .unwrap();
+    assert!(store.oldest_message(&Jid::new(chat_id)).unwrap().is_none());
+
+    let mut first = sample_message("m1", chat_id, 10);
+    first.from_me = true;
+    store.upsert_message(&first).unwrap();
+    store
+        .upsert_message(&sample_message("m2", chat_id, 30))
+        .unwrap();
+
+    let (id, from_me, timestamp) = store
+        .oldest_message(&Jid::new(chat_id))
+        .unwrap()
+        .expect("anchor");
+    assert_eq!(id, "m1");
+    assert!(from_me);
+    assert_eq!(timestamp, 10);
 }
 
 #[test]
@@ -235,6 +317,61 @@ fn history_merge_preserves_names_and_flags() {
         .find(|chat| chat.id == Jid::new("b@s.whatsapp.net"))
         .expect("bob");
     assert_eq!(bob.name, "Bob");
+}
+
+#[test]
+fn history_unread_does_not_reinflate_a_read_chat() {
+    let store = Store::open_in_memory().expect("open store");
+    let mut live = sample_chat("a@s.whatsapp.net", "Meike", 100);
+    live.unread_count = 0;
+    store.upsert_chat(&live).unwrap();
+
+    let mut history = sample_chat("a@s.whatsapp.net", "Meike", 200);
+    history.unread_count = 69;
+    store
+        .upsert_chat_from_history(&history, true, "316")
+        .unwrap();
+
+    let stored = store.list_chats().unwrap().remove(0);
+    assert_eq!(stored.unread_count, 0);
+}
+
+#[test]
+fn lid_and_phone_jids_merge_into_one_chat() {
+    let store = Store::open_in_memory().expect("open store");
+    let pn = "31619446549@s.whatsapp.net";
+    let lid = "254970750308491@lid";
+
+    store
+        .upsert_chat(&sample_chat(pn, "Meike", 100))
+        .unwrap();
+    store
+        .upsert_message(&sample_message("m-pn", pn, 10))
+        .unwrap();
+
+    let mut lid_chat = sample_chat(lid, "254970750308491", 200);
+    lid_chat.unread_count = 5;
+    store.upsert_chat(&lid_chat).unwrap();
+    store
+        .upsert_message(&sample_message("m-lid", lid, 20))
+        .unwrap();
+
+    let canonical = store
+        .link_jids(&Jid::new(pn), &Jid::new(lid))
+        .unwrap()
+        .expect("merged");
+    assert_eq!(canonical.as_str(), pn);
+    assert_eq!(store.canonical_jid(&Jid::new(lid)).unwrap().as_str(), pn);
+
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats.len(), 1);
+    assert_eq!(chats[0].name, "Meike");
+
+    let via_pn = store.list_messages(&Jid::new(pn), 10).unwrap();
+    let via_lid = store.list_messages(&Jid::new(lid), 10).unwrap();
+    let ids: Vec<&str> = via_pn.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["m-pn", "m-lid"]);
+    assert_eq!(via_lid.len(), 2);
 }
 
 #[test]

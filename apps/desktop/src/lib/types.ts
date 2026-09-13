@@ -10,6 +10,8 @@ export interface ChatSummary {
   lastMessageKind?: MessageKind | null;
   /** True when the newest message was sent by this account. */
   lastFromMe?: boolean;
+  /** Delivery status of the newest message (colors the list tick). */
+  lastStatus?: MessageStatus | null;
   lastActivityTs: number;
   unreadCount: number;
   muted: boolean;

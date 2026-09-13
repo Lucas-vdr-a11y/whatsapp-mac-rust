@@ -46,7 +46,9 @@ export function PairingScreen() {
     return () => window.clearInterval(interval);
   }, [qrTimeoutSecs, qrCode]);
 
-  const payload = qrCode ?? MOCK_QR;
+  // The mock payload is a browser-only design aid; in the real app a QR is
+  // only shown once the core actually produced one.
+  const payload = qrCode ?? (isTauri() ? null : MOCK_QR);
 
   const statusText = pairingExpired
     ? t("pairing.expiredStatus")
@@ -109,14 +111,18 @@ export function PairingScreen() {
         ) : (
           <>
             <div className="qr-card" aria-label={t("pairing.qrAria")}>
-              <QRCodeSVG
-                value={payload}
-                size={280}
-                level="M"
-                marginSize={2}
-                bgColor="#ffffff"
-                fgColor="#000000"
-              />
+              {payload ? (
+                <QRCodeSVG
+                  value={payload}
+                  size={280}
+                  level="M"
+                  marginSize={2}
+                  bgColor="#ffffff"
+                  fgColor="#000000"
+                />
+              ) : (
+                <div className="qr-pending" aria-hidden="true" />
+              )}
             </div>
             <p className="pairing-status">{statusText}</p>
             <button

@@ -182,6 +182,7 @@ mod tests {
             is_archived: false,
             last_message_kind: None,
             last_from_me: false,
+            last_status: None,
         }
     }
 

@@ -95,6 +95,19 @@ async fn core_reset_session(state: tauri::State<'_, state::AppState>) -> Result<
         .map_err(|error| error.to_string())
 }
 
+/// Current connection state, so a UI reload can pick up a live session
+/// without waiting for the next lifecycle event.
+#[tauri::command]
+fn core_connection_state(state: tauri::State<'_, state::AppState>) -> String {
+    use whatsapp_core::events::ConnectionState;
+    match state.core().connection_state() {
+        ConnectionState::Connected => "connected",
+        ConnectionState::Connecting => "connecting",
+        ConnectionState::Disconnected => "disconnected",
+    }
+    .to_string()
+}
+
 /// Sends a text message to a chat. Returns the stored local echo.
 #[tauri::command]
 async fn send_text(
@@ -125,6 +138,39 @@ async fn list_messages(
     state
         .core()
         .list_messages(&Jid::new(chat_id), limit.unwrap_or(200))
+        .map_err(|error| error.to_string())
+}
+
+/// One page of messages older than `before_id`, oldest first.
+///
+/// Powers scrolling up in a conversation without holding the whole history in
+/// memory.
+#[tauri::command]
+async fn list_messages_before(
+    state: tauri::State<'_, state::AppState>,
+    chat_id: String,
+    before_id: String,
+    limit: Option<u32>,
+) -> Result<Vec<Message>, String> {
+    state
+        .core()
+        .store()
+        .messages_before(&Jid::new(chat_id), &before_id, limit.unwrap_or(100))
+        .map_err(|error| error.to_string())
+}
+
+/// Requests older messages for a chat from the primary phone (on-demand
+/// history sync). The reply lands in the store and the UI refreshes.
+#[tauri::command]
+async fn fetch_older_history(
+    state: tauri::State<'_, state::AppState>,
+    chat_id: String,
+    count: Option<u32>,
+) -> Result<bool, String> {
+    state
+        .core()
+        .fetch_older_history(&Jid::new(chat_id), count.unwrap_or(100))
+        .await
         .map_err(|error| error.to_string())
 }
 
@@ -197,6 +243,26 @@ async fn set_typing(
         .map_err(|error| error.to_string())
 }
 
+/// Keep the main window resizable and above the configured minimum after
+/// `tauri-plugin-window-state` restores a previous frame. Overlay titlebars
+/// plus a saved-too-small size is what made the window look "stuck".
+fn enforce_main_window(window: &tauri::WebviewWindow) {
+    let _ = window.set_resizable(true);
+    let _ = window.set_maximizable(true);
+    let min = tauri::LogicalSize::new(800.0, 560.0);
+    let _ = window.set_min_size(Some(min));
+    if let (Ok(physical), Ok(scale)) = (window.inner_size(), window.scale_factor()) {
+        let width = f64::from(physical.width) / scale;
+        let height = f64::from(physical.height) / scale;
+        if width + 0.5 < 800.0 || height + 0.5 < 560.0 {
+            let _ = window.set_size(tauri::LogicalSize::new(
+                width.max(1100.0),
+                height.max(760.0),
+            ));
+        }
+    }
+}
+
 /// Application entry point.
 pub fn run() {
     let _ = tracing_subscriber::fmt()
@@ -238,9 +304,12 @@ pub fn run() {
             core_logout,
             core_restart_pairing,
             core_reset_session,
+            core_connection_state,
             send_text,
             list_chats,
             list_messages,
+            list_messages_before,
+            fetch_older_history,
             set_chat_pinned,
             set_chat_muted,
             set_chat_archived,
@@ -373,6 +442,12 @@ pub fn run() {
             // configured timeout emits `ui://lock` and covers the UI again.
             app.manage(security::FocusClock::new());
             if let Some(window) = app.get_webview_window("main") {
+                enforce_main_window(&window);
+                let delayed = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                    enforce_main_window(&delayed);
+                });
                 let handle = app.handle().clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::Focused(focused) = event {

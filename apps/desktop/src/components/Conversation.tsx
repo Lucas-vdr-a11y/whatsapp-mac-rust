@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Archive, Bell, BellOff, CheckCheck, Info, Trash2 } from "lucide-react";
 import { avatarSrc } from "../lib/avatar";
 import { t, useTranslation } from "../lib/i18n";
@@ -28,16 +28,16 @@ import {
 import { EmojiPicker } from "./EmojiPicker";
 import { MessageBubble } from "./message/MessageBubble";
 import {
+  CallsGlyph,
   Check,
-  EllipsisVertical,
-  MessageCircle,
+  Lock,
   Mic,
-  Paperclip,
-  Phone,
-  Search,
+  MoreCircleGlyph,
+  Plus,
   Send,
   Smile,
-  Video,
+  VideoGlyph,
+  WhatsAppMark,
   X,
 } from "./icons";
 
@@ -109,6 +109,15 @@ export function Conversation({ chat, onOpenContactInfo }: ConversationProps) {
   const contactNames = useAppStore((state) => state.contactNames);
   const sendText = useAppStore((state) => state.sendText);
   const loadMessages = useAppStore((state) => state.loadMessages);
+  const loadOlderMessages = useAppStore((state) => state.loadOlderMessages);
+  const fetchOlderHistory = useAppStore((state) => state.fetchOlderHistory);
+  const olderExhausted = useAppStore(
+    (state) => state.olderExhausted[chat.id] ?? false,
+  );
+  const loadingOlder = useAppStore(
+    (state) => state.loadingOlder[chat.id] ?? false,
+  );
+  const { t } = useTranslation();
   const sendTyping = useAppStore((state) => state.sendTyping);
   const markRead = useAppStore((state) => state.markRead);
   const replyTo = useAppStore((state) => state.replyTo);
@@ -118,6 +127,16 @@ export function Conversation({ chat, onOpenContactInfo }: ConversationProps) {
   const lastTypingSentAt = useRef(0);
   const typingActive = useRef(false);
   const isChannel = isChannelChat(chat.id);
+
+  // Scroll bookkeeping for scroll-up pagination: `pinnedToBottom` decides
+  // whether new messages may auto-scroll, `prevMetrics` anchors the viewport
+  // when an older page is prepended above it.
+  const pinnedToBottom = useRef(true);
+  const prevMetrics = useRef<{
+    chatId: Jid;
+    firstId: string | null;
+    height: number;
+  }>({ chatId: chat.id, firstId: null, height: 0 });
 
   // Mention targets for group chats: senders seen in the loaded history,
   // labelled with the names the core's chat list provides.
@@ -153,10 +172,63 @@ export function Conversation({ chat, onOpenContactInfo }: ConversationProps) {
     }
   }, [chat.id, chat.unreadCount, markRead]);
 
+  // Anchoring runs before paint: a prepended page of older messages shifts
+  // the scroll offset by exactly the height the list grew, so the message the
+  // user was reading stays put. Newest-first chats start pinned to the bottom.
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const firstId = messages[0]?.id ?? null;
+    const previous = prevMetrics.current;
+    const chatChanged = previous.chatId !== chat.id;
+    if (
+      !chatChanged &&
+      previous.firstId !== null &&
+      firstId !== previous.firstId &&
+      !pinnedToBottom.current &&
+      previous.height > 0
+    ) {
+      const delta = element.scrollHeight - previous.height;
+      if (delta > 0) element.scrollTop += delta;
+    }
+    if (chatChanged) pinnedToBottom.current = true;
+    prevMetrics.current = {
+      chatId: chat.id,
+      firstId,
+      height: element.scrollHeight,
+    };
+  }, [messages, chat.id]);
+
+  // Follow the newest message only while the user is already at the bottom.
   useEffect(() => {
     const element = scrollRef.current;
-    if (element) element.scrollTop = element.scrollHeight;
+    if (element && pinnedToBottom.current) {
+      element.scrollTop = element.scrollHeight;
+    }
   }, [messages.length, chat.id]);
+
+  const handleScroll = () => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const distanceFromBottom =
+      element.scrollHeight - element.scrollTop - element.clientHeight;
+    pinnedToBottom.current = distanceFromBottom < 80;
+    prevMetrics.current = {
+      chatId: chat.id,
+      firstId: messages[0]?.id ?? null,
+      height: element.scrollHeight,
+    };
+
+    // Near the top: walk the local history first, then ask the phone for
+    // more (throttled inside the store) once the store runs dry.
+    if (element.scrollTop < 96 && messages.length > 0) {
+      if (olderExhausted) {
+        void fetchOlderHistory(chat.id);
+      } else {
+        void loadOlderMessages(chat.id);
+      }
+    }
+  };
 
   // Throttled outgoing typing state: signal at most every 7 s while typing and
   // signal "paused" as soon as the composer empties or the message goes out.
@@ -191,7 +263,12 @@ export function Conversation({ chat, onOpenContactInfo }: ConversationProps) {
         chat={chat}
         onOpenContactInfo={onOpenContactInfo}
       />
-      <div className="messages" ref={scrollRef}>
+      <div className="messages" ref={scrollRef} onScroll={handleScroll}>
+        {loadingOlder && (
+          <div className="messages-loading-older" role="status">
+            {t("conversation.loadingOlder")}
+          </div>
+        )}
         {renderMessages(messages, chat, startEditing)}
       </div>
       <Composer
@@ -224,17 +301,21 @@ export function EmptyConversation() {
   const { t } = useTranslation();
 
   return (
-    <section className="conversation" style={{ position: "relative" }}>
-      <div className="empty-conversation">
-        <div className="empty-logo">
-          <MessageCircle size={44} strokeWidth={1.2} />
-        </div>
-        <h2>RustWA</h2>
-        <p>{t("conversation.emptyLede")}</p>
+    <section className="conversation empty-conversation">
+      <div className="window-drag-bar" data-tauri-drag-region />
+      <div className="empty-center">
+        <WhatsAppMark size={53} className="empty-mark" />
+        <h2>WhatsApp</h2>
       </div>
       <div className="empty-footer">
-        <span>🔒</span>
-        <span>{t("common.e2eEncrypted")}</span>
+        <Lock size={13} />
+        <span>
+          {t("conversation.e2eFooter")}{" "}
+          <span className="empty-footer-link">
+            {t("conversation.e2eFooterLink")}
+          </span>
+          .
+        </span>
       </div>
       <CallOverlay />
     </section>
@@ -341,35 +422,45 @@ function ConversationHeader({
       .finally(() => setClearBusy(false));
   };
 
+  // Presence line under the name: typing first, then online/last seen, and the
+  // "click for contact/group info" affordance the official client shows
+  // whenever there is nothing live to report.
   const subtitle = typing
     ? t("conversation.typing")
     : isChannelChat(chat.id)
       ? t("conversation.channel")
-      : chat.isGroup
-        ? t("conversation.group")
-        : presence?.online
-          ? t("conversation.online")
-          : presence?.lastSeenTs
-            ? t("conversation.lastSeen", {
-                time: formatBubbleTime(presence.lastSeenTs),
-              })
-            : null;
+      : presence?.online
+        ? t("conversation.online")
+        : presence?.lastSeenTs
+          ? t("conversation.lastSeen", {
+              time: formatBubbleTime(presence.lastSeenTs),
+            })
+          : chat.isGroup
+            ? t("conversation.clickForGroupInfo")
+            : t("conversation.clickForContactInfo");
 
   return (
     <>
       <header className="conversation-header" data-tauri-drag-region>
         <ConversationAvatar chat={chat} />
         <div className="conversation-title" data-tauri-drag-region>
-          <span className="conversation-name">{chat.name}</span>
-          {subtitle && <span className="conversation-subtitle">{subtitle}</span>}
+          <span className="conversation-name" data-tauri-drag-region>
+            {chat.name}
+          </span>
+          {subtitle && (
+            <span className="conversation-subtitle" data-tauri-drag-region>
+              {subtitle}
+            </span>
+          )}
         </div>
         <div className="header-actions no-drag">
           <button
             type="button"
             className="icon-button"
-            title={t("common.search")}
+            title={t("conversation.videoCall")}
+            onClick={() => startCall(chat.id, true)}
           >
-            <Search size={22} />
+            <VideoGlyph size={24} />
           </button>
           <button
             type="button"
@@ -377,15 +468,7 @@ function ConversationHeader({
             title={t("conversation.voiceCall")}
             onClick={() => startCall(chat.id, false)}
           >
-            <Phone size={22} />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            title={t("conversation.videoCall")}
-            onClick={() => startCall(chat.id, true)}
-          >
-            <Video size={22} />
+            <CallsGlyph size={24} />
           </button>
           <button
             type="button"
@@ -397,7 +480,7 @@ function ConversationHeader({
               setMenu({ x: event.clientX, y: event.clientY })
             }
           >
-            <EllipsisVertical size={22} />
+            <MoreCircleGlyph size={24} />
           </button>
         </div>
       </header>
@@ -493,12 +576,21 @@ function renderMessages(
       next.senderId !== message.senderId ||
       new Date(next.timestamp * 1000).toDateString() !== day;
 
+    // Middle-of-group bubbles square the corner the tail would sit on.
+    const previous = index > 0 ? messages[index - 1] : undefined;
+    const isFirstOfGroup =
+      !previous ||
+      previous.senderId !== message.senderId ||
+      new Date(previous.timestamp * 1000).toDateString() !== day;
+    const isMiddleOfGroup = !isFirstOfGroup && !isLastOfGroup;
+
     nodes.push(
       <MessageBubble
         key={message.id}
         message={message}
         chat={chat}
         tail={isLastOfGroup}
+        middle={isMiddleOfGroup}
         onEdit={onEdit}
       />,
     );
@@ -829,15 +921,6 @@ function Composer({
       ) : null}
 
       <div className="composer-row">
-        <button
-          type="button"
-          className="icon-button"
-          title={t("conversation.emoji")}
-          aria-expanded={emojiOpen}
-          onClick={toggleEmoji}
-        >
-          <Smile size={24} />
-        </button>
         {!isChannel && (
           <button
             type="button"
@@ -846,10 +929,11 @@ function Composer({
             aria-expanded={attachOpen}
             onClick={toggleAttach}
           >
-            <Paperclip size={24} />
+            <Plus size={24} />
           </button>
         )}
 
+        <div className="composer-pill">
         <textarea
           ref={textareaRef}
           className="composer-input"
@@ -924,33 +1008,43 @@ function Composer({
             }
           }}
         />
+          <button
+            type="button"
+            className="icon-button"
+            title={t("conversation.emoji")}
+            aria-expanded={emojiOpen}
+            onClick={toggleEmoji}
+          >
+            <Smile size={22} />
+          </button>
+        </div>
 
         {editing ? (
           <button
             type="button"
-            className="icon-button"
+            className="composer-action"
             title={t("conversation.saveEdit")}
             disabled={!hasText}
             onClick={submit}
           >
-            <Check size={22} />
+            <Check size={18} />
           </button>
         ) : hasText ? (
           <button
             type="button"
-            className="icon-button"
+            className="composer-action"
             title={t("conversation.send")}
             onClick={submit}
           >
-            <Send size={24} />
+            <Send size={18} />
           </button>
         ) : (
           <button
             type="button"
-            className="icon-button"
+            className="composer-action"
             title={t("conversation.voiceMessage")}
           >
-            <Mic size={24} />
+            <Mic size={18} />
           </button>
         )}
       </div>

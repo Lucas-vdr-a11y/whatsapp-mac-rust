@@ -47,6 +47,18 @@ impl Jid {
     pub fn is_status(&self) -> bool {
         self.server() == Some("broadcast")
     }
+
+    /// True for a linked-identity address (`@lid`).
+    pub fn is_lid(&self) -> bool {
+        self.server() == Some("lid")
+    }
+
+    /// True when `name` is empty or just this JID's user part (a phone or
+    /// LID number), i.e. not a real contact or group name.
+    pub fn name_is_placeholder(&self, name: &str) -> bool {
+        let trimmed = name.trim();
+        trimmed.is_empty() || trimmed == self.user()
+    }
 }
 
 impl fmt::Display for Jid {
@@ -103,6 +115,10 @@ pub struct ChatSummary {
     /// tick prefix the official client shows in the chat list.
     #[serde(default)]
     pub last_from_me: bool,
+    /// Delivery status of the newest message. Blue double checks when read,
+    /// grey otherwise — same as the official chat list.
+    #[serde(default)]
+    pub last_status: Option<MessageStatus>,
 }
 
 /// What a message contains. The UI switches on this enum.

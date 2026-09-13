@@ -38,6 +38,8 @@ interface MessageBubbleProps {
   chat: ChatSummary;
   /** True when the next message starts a new sender/day group. */
   tail: boolean;
+  /** True when the message sits between two messages of the same group. */
+  middle?: boolean;
   onEdit: (message: Message) => void;
 }
 
@@ -45,6 +47,7 @@ export function MessageBubble({
   message,
   chat,
   tail,
+  middle = false,
   onEdit,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
@@ -86,6 +89,7 @@ export function MessageBubble({
   const classes = ["bubble"];
   if (message.fromMe) classes.push("out");
   if (tail) classes.push(message.fromMe ? "tail-out" : "tail-in");
+  if (middle) classes.push(message.fromMe ? "mid-out" : "mid-in");
   if (isMedia) classes.push("media-bubble");
   if (message.kind === "sticker") classes.push("media-plain");
   if (deleted) classes.push("deleted");

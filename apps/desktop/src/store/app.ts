@@ -12,7 +12,7 @@ import type {
 } from "../lib/types";
 import { MOCK_CHATS, MOCK_MESSAGES } from "../mocks/data";
 
-export type ChatFilter = "all" | "unread" | "groups";
+export type ChatFilter = "all" | "unread" | "favorites" | "groups";
 
 /** Media metadata as reported by the core's `media_download` command. */
 export interface MediaInfo {
@@ -115,6 +115,12 @@ interface AppState {
   messages: Record<Jid, Message[]>;
   /** Chats whose history has been fetched from the core. */
   loadedChatIds: Record<Jid, boolean>;
+  /** Chats whose local history has been walked back to the start. */
+  olderExhausted: Record<Jid, boolean>;
+  /** Chats with an in-flight older-message page load. */
+  loadingOlder: Record<Jid, boolean>;
+  /** Chats where we already asked the phone for more history. */
+  olderRequested: Record<Jid, boolean>;
   selectedChatId: Jid | null;
   query: string;
   filter: ChatFilter;
@@ -222,6 +228,12 @@ interface AppState {
   setMessages: (chatId: Jid, messages: Message[]) => void;
   /** Fetch a chat's history from the core, once. */
   loadMessages: (chatId: Jid) => void;
+  /** Re-read a chat from the store, even if it was already loaded. */
+  reloadMessages: (chatId: Jid) => void;
+  /** Load one page of older messages from the local store (scroll-up). */
+  loadOlderMessages: (chatId: Jid) => Promise<void>;
+  /** Ask the primary phone for older messages not present locally. */
+  fetchOlderHistory: (chatId: Jid) => Promise<void>;
   /** Update the delivery state of one message. */
   setMessageStatus: (
     chatId: Jid,
@@ -291,6 +303,9 @@ export const useAppStore = create<AppState>((set, get) => {
     messages: mockMode ? MOCK_MESSAGES : {},
     contactNames: mockMode ? contactNamesFromChats(MOCK_CHATS) : {},
     loadedChatIds: {},
+    olderExhausted: {},
+    loadingOlder: {},
+    olderRequested: {},
     selectedChatId: null,
     query: "",
     filter: "all",
@@ -328,12 +343,16 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => {
         const existing = state.messages[message.chatId] ?? [];
         if (existing.some((m) => m.id === message.id)) return state;
-        return {
-          messages: {
-            ...state.messages,
-            [message.chatId]: [...existing, message],
+        return applyMessageToChatList(
+          {
+            ...state,
+            messages: {
+              ...state.messages,
+              [message.chatId]: [...existing, message],
+            },
           },
-        };
+          message,
+        );
       }),
 
     sendText: (chatId, text, mentions) => {
@@ -759,10 +778,104 @@ export const useAppStore = create<AppState>((set, get) => {
     loadMessages: (chatId) => {
       if (!isTauri()) return;
       if (get().loadedChatIds[chatId]) return;
+      get().reloadMessages(chatId);
+    },
 
+    reloadMessages: (chatId) => {
+      if (!isTauri()) return;
       void invokeCore<Message[]>("list_messages", { chatId, limit: 200 })
-        .then((messages) => get().setMessages(chatId, messages))
+        .then((incoming) => {
+          set((state) => {
+            const existing = state.messages[chatId] ?? [];
+            const optimistic = existing.filter((message) =>
+              message.id.startsWith("local-"),
+            );
+            const known = new Set(incoming.map((message) => message.id));
+            return {
+              messages: {
+                ...state.messages,
+                [chatId]: [
+                  ...incoming,
+                  ...optimistic.filter((message) => !known.has(message.id)),
+                ],
+              },
+              loadedChatIds: { ...state.loadedChatIds, [chatId]: true },
+            };
+          });
+        })
         .catch((error) => console.error("list_messages failed", error));
+    },
+
+    loadOlderMessages: async (chatId) => {
+      if (!isTauri()) return;
+      const state = get();
+      if (state.loadingOlder[chatId] || state.olderExhausted[chatId]) return;
+      const messages = state.messages[chatId];
+      if (!messages || messages.length === 0) return;
+
+      const beforeId = messages[0].id;
+      set((current) => ({
+        loadingOlder: { ...current.loadingOlder, [chatId]: true },
+      }));
+      try {
+        const older = await invokeCore<Message[]>("list_messages_before", {
+          chatId,
+          beforeId,
+          limit: 100,
+        });
+        if (older.length === 0) {
+          set((current) => ({
+            olderExhausted: { ...current.olderExhausted, [chatId]: true },
+          }));
+          return;
+        }
+        set((current) => {
+          const existing = current.messages[chatId] ?? [];
+          const known = new Set(existing.map((message) => message.id));
+          const fresh = older.filter((message) => !known.has(message.id));
+          if (fresh.length === 0) return current;
+          return {
+            messages: { ...current.messages, [chatId]: [...fresh, ...existing] },
+          };
+        });
+      } catch (error) {
+        console.error("list_messages_before failed", error);
+      } finally {
+        set((current) => ({
+          loadingOlder: { ...current.loadingOlder, [chatId]: false },
+        }));
+      }
+    },
+
+    fetchOlderHistory: async (chatId) => {
+      if (!isTauri()) return;
+      const state = get();
+      if (state.olderRequested[chatId]) return;
+      set((current) => ({
+        olderRequested: { ...current.olderRequested, [chatId]: true },
+      }));
+
+      try {
+        await invokeCore<boolean>("fetch_older_history", {
+          chatId,
+          count: 100,
+        });
+      } catch (error) {
+        // Older builds do not expose the command; keep the local-only view.
+        console.warn("fetch_older_history failed", error);
+        return;
+      }
+
+      // The phone answers asynchronously with a history-sync chunk. Give the
+      // core a few chances to store it, then walk one more page into view.
+      for (const delay of [2500, 5000, 10000]) {
+        await new Promise((resolve) => window.setTimeout(resolve, delay));
+        set((current) => ({
+          olderExhausted: { ...current.olderExhausted, [chatId]: false },
+        }));
+        await get().loadOlderMessages(chatId);
+        if (!get().olderExhausted[chatId]) return;
+      }
     },
 
     setMessageStatus: (chatId, messageId, status) =>
@@ -1237,6 +1350,39 @@ function contactNamesFromChats(chats: ChatSummary[]): Record<Jid, string> {
   return names;
 }
 
+/** Keep the chat-list preview, sort key and unread in lockstep with a live
+ * message so the row does not stay stale until the next `list_chats`. */
+function applyMessageToChatList<
+  T extends { chats: ChatSummary[]; selectedChatId: Jid | null },
+>(state: T, message: Message): T {
+  const viewing =
+    state.selectedChatId === message.chatId &&
+    typeof document !== "undefined" &&
+    document.visibilityState === "visible";
+  const unreadBump = message.fromMe || viewing ? 0 : 1;
+  const index = state.chats.findIndex((chat) => chat.id === message.chatId);
+  const previous = index >= 0 ? state.chats[index] : null;
+  const next: ChatSummary = {
+    id: message.chatId,
+    name: previous?.name ?? message.chatId.split("@")[0] ?? message.chatId,
+    lastMessagePreview: message.text ?? previous?.lastMessagePreview ?? null,
+    lastMessageKind: message.kind,
+    lastFromMe: message.fromMe,
+    lastStatus: message.fromMe ? message.status : (previous?.lastStatus ?? null),
+    lastActivityTs: Math.max(previous?.lastActivityTs ?? 0, message.timestamp),
+    unreadCount: (previous?.unreadCount ?? 0) + unreadBump,
+    muted: previous?.muted ?? false,
+    pinned: previous?.pinned ?? false,
+    isGroup: previous?.isGroup ?? message.chatId.endsWith("@g.us"),
+    isArchived: previous?.isArchived ?? false,
+  };
+  const rest =
+    index >= 0
+      ? state.chats.filter((chat) => chat.id !== message.chatId)
+      : state.chats;
+  return { ...state, chats: [next, ...rest] };
+}
+
 /** Stable order for the mention JIDs handed to the core. */
 function dedupeJids(jids: Jid[] | undefined): Jid[] {
   return jids ? [...new Set(jids)] : [];
@@ -1261,6 +1407,7 @@ export function selectVisibleChats(state: AppState): ChatSummary[] {
     .filter((chat) => {
       if (chat.isArchived) return false;
       if (state.filter === "unread" && chat.unreadCount === 0) return false;
+      if (state.filter === "favorites" && !chat.pinned) return false;
       if (state.filter === "groups" && !chat.isGroup) return false;
       if (query && !chat.name.toLowerCase().includes(query)) return false;
       return true;

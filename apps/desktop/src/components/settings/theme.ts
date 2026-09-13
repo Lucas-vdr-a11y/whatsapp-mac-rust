@@ -17,17 +17,27 @@ export function readThemePreference(): ThemePreference {
   return "system";
 }
 
+function systemPrefersLight(): boolean {
+  return window.matchMedia("(prefers-color-scheme: light)").matches;
+}
+
 /**
- * Applies a preference to the document root. "system" removes the attribute so
- * the `prefers-color-scheme` rules in settings.css take over.
+ * Resolves a preference to a concrete appearance. "system" follows the OS
+ * appearance; the other values are returned unchanged.
+ */
+export function resolveTheme(theme: ThemePreference): "light" | "dark" {
+  if (theme === "system") {
+    return systemPrefersLight() ? "light" : "dark";
+  }
+  return theme;
+}
+
+/**
+ * Applies a preference to the document root. The resolved value is always
+ * written as `data-theme` so tokens.css stays the single source of truth.
  */
 export function applyThemePreference(theme: ThemePreference): void {
-  const root = document.documentElement;
-  if (theme === "system") {
-    root.removeAttribute("data-theme");
-  } else {
-    root.dataset.theme = theme;
-  }
+  document.documentElement.dataset.theme = resolveTheme(theme);
 }
 
 /** Persists a preference; failures are non-fatal. */
@@ -37,6 +47,21 @@ export function storeThemePreference(theme: ThemePreference): void {
   } catch {
     // Persistence is best-effort.
   }
+}
+
+/**
+ * Re-applies the theme whenever the OS appearance changes while the stored
+ * preference is "system". Returns an unsubscribe function.
+ */
+export function watchSystemTheme(): () => void {
+  const query = window.matchMedia("(prefers-color-scheme: light)");
+  const onChange = () => {
+    if (readThemePreference() === "system") {
+      applyThemePreference("system");
+    }
+  };
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
 }
 
 /**

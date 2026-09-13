@@ -3,13 +3,14 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { ChatWindow } from "./components/ChatWindow";
 import { LockScreen } from "./components/security/LockScreen";
-import { applyBootTheme } from "./components/settings/theme";
+import { applyBootTheme, watchSystemTheme } from "./components/settings/theme";
 import "./styles/index.css";
 
 // Dev-only: `?theme=light|dark` wins over the stored preference. Otherwise the
-// persisted `rustwa.theme` is applied; "system" removes the attribute so the
-// `prefers-color-scheme` rules take over.
+// persisted `rustwa.theme` is resolved to a concrete `data-theme` (system
+// follows the OS appearance and is re-applied when it changes).
 applyBootTheme(window.location.search);
+watchSystemTheme();
 
 const container = document.getElementById("root");
 if (!container) throw new Error("#root is missing from index.html");

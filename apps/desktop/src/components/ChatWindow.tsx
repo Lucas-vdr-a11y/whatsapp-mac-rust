@@ -178,6 +178,16 @@ export function ChatWindow({ chatId }: ChatWindowProps) {
             refreshTimer.current = window.setTimeout(() => {
               refreshTimer.current = null;
               refreshChats();
+              void invokeCore<Message[]>("list_messages", {
+                chatId,
+                limit: 200,
+              })
+                .then((messages) =>
+                  useAppStore.getState().setMessages(chatId, messages),
+                )
+                .catch((error) =>
+                  console.error("list_messages failed", error),
+                );
             }, 400);
           }
           break;

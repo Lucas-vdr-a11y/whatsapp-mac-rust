@@ -2,56 +2,6 @@
  * Owned by the settings-UI workstream. */
 
 /* ------------------------------------------------------------------ */
-/* System theme fallback                                                */
-/* ------------------------------------------------------------------ */
-
-/* tokens.css defaults to dark and only switches on `data-theme`. The
- * "system" preference removes that attribute, so mirror the light palette
- * here for light OS appearances. Keep in sync with tokens.css. */
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) {
-    color-scheme: light;
-
-    --bg-rail: #ffffff;
-    --bg-panel: #ffffff;
-    --bg-header: #f7f5f3;
-    --bg-chat: #f5f1eb;
-    --bg-input: #ffffff;
-    --bg-hover: rgba(194, 189, 184, 0.15);
-    --bg-active: rgba(194, 189, 184, 0.15);
-    --bg-selected: rgba(194, 189, 184, 0.15);
-    --bg-modal: #ffffff;
-    --bg-badge: #1daa61;
-
-    --text-primary: #0a0a0a;
-    --text-secondary: rgba(0, 0, 0, 0.6);
-    --text-muted: #959393;
-    --text-inverse: #ffffff;
-
-    --icon: #0a0a0a;
-    --icon-strong: #0a0a0a;
-
-    --accent: #1daa61;
-    --accent-strong: #15603e;
-
-    --bubble-in: #ffffff;
-    --bubble-out: #d9fdd3;
-    --bubble-text: #0a0a0a;
-
-    --link: #1b8755;
-    --divider: rgba(0, 0, 0, 0.1);
-    --danger: #ea0038;
-    --warning: #d97706;
-    --tick-read: #007bfc;
-    --unread-badge: #1daa61;
-    --unread-badge-text: #ffffff;
-
-    --shadow-bubble: 0 1px 0.5px rgba(0, 0, 0, 0.13);
-    --shadow-modal: 0 12px 44px rgba(0, 0, 0, 0.26);
-  }
-}
-
-/* ------------------------------------------------------------------ */
 /* Rows and section headers                                             */
 /* ------------------------------------------------------------------ */
 

@@ -18,7 +18,7 @@ use crate::error::{CoreError, Result};
 use crate::types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};
 
 /// Current schema version. Bump together with `migrations()`.
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// Thread-safe handle to the application database.
 pub struct Store {
@@ -104,6 +104,12 @@ impl Store {
         if version < 7 {
             connection
                 .execute_batch(include_str!("schema/007_preview_meta.sql"))
+                .map_err(storage_error)?;
+        }
+
+        if version < 8 {
+            connection
+                .execute_batch(include_str!("schema/008_jid_aliases.sql"))
                 .map_err(storage_error)?;
         }
 
@@ -230,10 +236,13 @@ impl Store {
                          chats.last_activity_ts,
                          excluded.last_activity_ts
                      ),
-                     unread_count = MAX(chats.unread_count, excluded.unread_count),
-                     muted = MAX(chats.muted, excluded.muted),
-                     pinned = MAX(chats.pinned, excluded.pinned),
-                     is_archived = MAX(chats.is_archived, excluded.is_archived)",
+                     -- Live read/pin/mute/archive patches own these flags.
+                     -- A late history chunk must not re-inflate unread or
+                     -- resurrect a flag the user (or another device) cleared.
+                     unread_count = chats.unread_count,
+                     muted = chats.muted,
+                     pinned = chats.pinned,
+                     is_archived = chats.is_archived",
                 params![
                     chat.id.as_str(),
                     chat.name,
@@ -254,6 +263,7 @@ impl Store {
 
     /// Insert or update a message row.
     pub fn upsert_message(&self, message: &Message) -> Result<()> {
+        let chat_id = self.canonical_jid(&message.chat_id)?;
         let connection = self.lock()?;
         connection
             .execute(
@@ -261,11 +271,12 @@ impl Store {
                      id, chat_id, sender_id, from_me, timestamp, kind, text, status
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(id) DO UPDATE SET
+                     chat_id = excluded.chat_id,
                      status = excluded.status,
                      text = excluded.text",
                 params![
                     message.id,
-                    message.chat_id.as_str(),
+                    chat_id.as_str(),
                     message.sender_id.as_str(),
                     message.from_me as i64,
                     as_i64(message.timestamp),
@@ -285,7 +296,10 @@ impl Store {
             .prepare(
                 "SELECT id, name, last_message_preview, last_activity_ts,
                         unread_count, muted, pinned, is_group, is_archived,
-                        last_kind, last_from_me
+                        last_kind, last_from_me,
+                        (SELECT status FROM messages
+                          WHERE messages.chat_id = chats.id
+                          ORDER BY timestamp DESC, rowid DESC LIMIT 1)
                  FROM chats
                  ORDER BY pinned DESC, last_activity_ts DESC",
             )
@@ -308,6 +322,10 @@ impl Store {
                         .as_deref()
                         .map(kind_from_str),
                     last_from_me: row.get::<_, i64>(10)? != 0,
+                    last_status: row
+                        .get::<_, Option<String>>(11)?
+                        .as_deref()
+                        .map(status_from_str),
                 })
             })
             .map_err(storage_error)?;
@@ -319,19 +337,21 @@ impl Store {
     /// Messages of one chat, oldest first. `limit` keeps memory bounded for
     /// very long histories; the UI paginates by asking for older offsets later.
     pub fn list_messages(&self, chat_id: &Jid, limit: u32) -> Result<Vec<Message>> {
+        let canonical = self.canonical_jid(chat_id)?;
         let connection = self.lock()?;
         let mut statement = connection
             .prepare(
                 "SELECT id, chat_id, sender_id, from_me, timestamp, kind, text, status
                  FROM messages
                  WHERE chat_id = ?1
+                    OR chat_id IN (SELECT jid FROM jid_aliases WHERE canonical = ?1)
                  ORDER BY timestamp DESC, rowid DESC
                  LIMIT ?2",
             )
             .map_err(storage_error)?;
 
         let rows = statement
-            .query_map(params![chat_id.as_str(), limit], row_to_message)
+            .query_map(params![canonical.as_str(), limit], row_to_message)
             .map_err(storage_error)?;
 
         let mut messages = rows
@@ -339,6 +359,80 @@ impl Store {
             .map_err(storage_error)?;
         messages.reverse();
         Ok(messages)
+    }
+
+    /// Messages of one chat older than `before_id`, oldest first.
+    ///
+    /// Backwards pagination for the conversation view: the caller passes the
+    /// oldest message it currently shows and receives the page before it.
+    /// Ordering mirrors [`Store::list_messages`] (`timestamp DESC, rowid
+    /// DESC`), so pages never overlap or skip rows with equal timestamps.
+    pub fn messages_before(
+        &self,
+        chat_id: &Jid,
+        before_id: &str,
+        limit: u32,
+    ) -> Result<Vec<Message>> {
+        let canonical = self.canonical_jid(chat_id)?;
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT m.id, m.chat_id, m.sender_id, m.from_me, m.timestamp, m.kind, m.text, m.status
+                 FROM messages m
+                 JOIN messages anchor ON anchor.id = ?2
+                 WHERE (m.chat_id = ?1
+                    OR m.chat_id IN (SELECT jid FROM jid_aliases WHERE canonical = ?1))
+                   AND (
+                       m.timestamp < anchor.timestamp
+                       OR (m.timestamp = anchor.timestamp AND m.rowid < anchor.rowid)
+                   )
+                 ORDER BY m.timestamp DESC, m.rowid DESC
+                 LIMIT ?3",
+            )
+            .map_err(storage_error)?;
+
+        let rows = statement
+            .query_map(params![canonical.as_str(), before_id, limit], row_to_message)
+            .map_err(storage_error)?;
+
+        let mut messages = rows
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(storage_error)?;
+        messages.reverse();
+        Ok(messages)
+    }
+
+    /// Oldest stored message of a chat: `(id, from_me, timestamp_secs)`.
+    ///
+    /// Used as the anchor for on-demand history requests to the primary phone.
+    pub fn oldest_message(&self, chat_id: &Jid) -> Result<Option<(String, bool, u64)>> {
+        let canonical = self.canonical_jid(chat_id)?;
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, from_me, timestamp
+                 FROM messages
+                 WHERE chat_id = ?1
+                    OR chat_id IN (SELECT jid FROM jid_aliases WHERE canonical = ?1)
+                 ORDER BY timestamp ASC, rowid ASC
+                 LIMIT 1",
+            )
+            .map_err(storage_error)?;
+
+        let mut rows = statement
+            .query_map(params![canonical.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)? != 0,
+                    row.get::<_, i64>(2)? as u64,
+                ))
+            })
+            .map_err(storage_error)?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row.map_err(storage_error)?)),
+            None => Ok(None),
+        }
     }
 
     /// Update the delivery state of an outgoing message.
@@ -366,6 +460,7 @@ impl Store {
         name_hint: Option<&str>,
         increment_unread: bool,
     ) -> Result<()> {
+        let chat_id = self.canonical_jid(chat_id)?;
         let connection = self.lock()?;
         let fallback_name = chat_id.user().to_owned();
         let name_hint = name_hint.unwrap_or("");
@@ -582,6 +677,7 @@ impl Store {
         kind: MessageKind,
         from_me: bool,
     ) -> Result<()> {
+        let chat_id = self.canonical_jid(chat_id)?;
         let connection = self.lock()?;
         connection
             .execute(
@@ -608,6 +704,7 @@ impl Store {
     /// Apply an address-book name: store it as the contact name and rename any
     /// existing chat row (address-book names are authoritative).
     pub fn apply_contact_name(&self, jid: &Jid, name: &str) -> Result<bool> {
+        let canonical = self.canonical_jid(jid)?;
         let connection = self.lock()?;
         connection
             .execute(
@@ -616,13 +713,151 @@ impl Store {
                 params![jid.as_str(), name],
             )
             .map_err(storage_error)?;
+        if canonical.as_str() != jid.as_str() {
+            connection
+                .execute(
+                    "INSERT INTO contacts (id, name) VALUES (?1, ?2)
+                     ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+                    params![canonical.as_str(), name],
+                )
+                .map_err(storage_error)?;
+        }
         let renamed = connection
             .execute(
-                "UPDATE chats SET name = ?2 WHERE id = ?1 AND name != ?2",
-                params![jid.as_str(), name],
+                "UPDATE chats SET name = ?2 WHERE (id = ?1 OR id = ?3) AND name != ?2",
+                params![jid.as_str(), name, canonical.as_str()],
             )
             .map_err(storage_error)?;
         Ok(renamed > 0)
+    }
+
+    /// The chat id that `jid` should be stored under. Identity aliases
+    /// (phone-number ↔ LID) collapse onto one row so history and live
+    /// messages land in the same conversation.
+    pub fn canonical_jid(&self, jid: &Jid) -> Result<Jid> {
+        let connection = self.lock()?;
+        let mapped: Option<String> = connection
+            .query_row(
+                "SELECT canonical FROM jid_aliases WHERE jid = ?1",
+                params![jid.as_str()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(storage_error)?;
+        Ok(mapped.map(Jid::new).unwrap_or_else(|| jid.clone()))
+    }
+
+    /// Direct chats whose name is still a numeric placeholder (LID or phone).
+    pub fn chats_needing_contact_names(&self, limit: u32) -> Result<Vec<Jid>> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id FROM chats
+                 WHERE is_group = 0
+                   AND id NOT LIKE '%@g.us'
+                   AND id NOT LIKE '%@broadcast'
+                   AND id NOT LIKE '%@newsletter'
+                   AND (name = '' OR name = substr(id, 1, instr(id, '@') - 1))
+                 ORDER BY last_activity_ts DESC
+                 LIMIT ?1",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![limit], |row| row.get::<_, String>(0))
+            .map_err(storage_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map(|ids| ids.into_iter().map(Jid::new).collect())
+            .map_err(storage_error)
+    }
+
+    /// Record that `left` and `right` are the same person (PN + LID).
+    ///
+    /// Messages and the chat row of the non-canonical id are moved onto the
+    /// canonical one. Returns the canonical JID when a merge happened, or
+    /// `None` when the two were already the same identity.
+    pub fn link_jids(&self, left: &Jid, right: &Jid) -> Result<Option<Jid>> {
+        if left.as_str() == right.as_str() {
+            return Ok(None);
+        }
+
+        let left_canon = self.canonical_jid(left)?;
+        let right_canon = self.canonical_jid(right)?;
+        if left_canon.as_str() == right_canon.as_str() {
+            return Ok(None);
+        }
+
+        let connection = self.lock()?;
+        let tx = connection.unchecked_transaction().map_err(storage_error)?;
+
+        let left_row = chat_identity(&tx, left_canon.as_str())?;
+        let right_row = chat_identity(&tx, right_canon.as_str())?;
+        let canonical = pick_canonical_jid(&left_canon, left_row.as_ref(), &right_canon, right_row.as_ref());
+        let other = if canonical.as_str() == left_canon.as_str() {
+            right_canon.clone()
+        } else {
+            left_canon.clone()
+        };
+
+        tx.execute(
+            "UPDATE messages SET chat_id = ?1 WHERE chat_id = ?2",
+            params![canonical.as_str(), other.as_str()],
+        )
+        .map_err(storage_error)?;
+
+        if let Some(other_row) = chat_identity(&tx, other.as_str())? {
+            tx.execute(
+                "INSERT INTO chats (
+                     id, name, last_message_preview, last_activity_ts,
+                     unread_count, muted, pinned, is_group, is_archived
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(id) DO UPDATE SET
+                     name = CASE
+                         WHEN chats.name = '' OR chats.name = substr(chats.id, 1, instr(chats.id, '@') - 1)
+                             THEN excluded.name
+                         ELSE chats.name
+                     END,
+                     last_message_preview = COALESCE(
+                         chats.last_message_preview,
+                         excluded.last_message_preview
+                     ),
+                     last_activity_ts = MAX(chats.last_activity_ts, excluded.last_activity_ts),
+                     unread_count = MAX(chats.unread_count, excluded.unread_count),
+                     muted = MAX(chats.muted, excluded.muted),
+                     pinned = MAX(chats.pinned, excluded.pinned),
+                     is_archived = MAX(chats.is_archived, excluded.is_archived)",
+                params![
+                    canonical.as_str(),
+                    other_row.name,
+                    other_row.preview,
+                    other_row.activity,
+                    other_row.unread,
+                    other_row.muted,
+                    other_row.pinned,
+                    other_row.is_group,
+                    other_row.archived,
+                ],
+            )
+            .map_err(storage_error)?;
+            tx.execute("DELETE FROM chats WHERE id = ?1", params![other.as_str()])
+                .map_err(storage_error)?;
+        }
+
+        for jid in [left.as_str(), right.as_str(), left_canon.as_str(), right_canon.as_str()] {
+            tx.execute(
+                "INSERT INTO jid_aliases (jid, canonical) VALUES (?1, ?2)
+                 ON CONFLICT(jid) DO UPDATE SET canonical = excluded.canonical",
+                params![jid, canonical.as_str()],
+            )
+            .map_err(storage_error)?;
+        }
+        tx.execute(
+            "UPDATE jid_aliases SET canonical = ?1 WHERE canonical = ?2",
+            params![canonical.as_str(), other.as_str()],
+        )
+        .map_err(storage_error)?;
+
+        tx.commit().map_err(storage_error)?;
+        Ok(Some(canonical))
     }
 
     /// Add or replace a reaction; an empty emoji removes it.
@@ -825,6 +1060,67 @@ fn status_from_str(value: &str) -> MessageStatus {
         "failed" => MessageStatus::Failed,
         _ => MessageStatus::Pending,
     }
+}
+
+struct ChatIdentity {
+    name: String,
+    preview: Option<String>,
+    activity: i64,
+    unread: i64,
+    muted: i64,
+    pinned: i64,
+    is_group: i64,
+    archived: i64,
+}
+
+fn chat_identity(connection: &Connection, id: &str) -> Result<Option<ChatIdentity>> {
+    connection
+        .query_row(
+            "SELECT name, last_message_preview, last_activity_ts,
+                    unread_count, muted, pinned, is_group, is_archived
+             FROM chats WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(ChatIdentity {
+                    name: row.get(0)?,
+                    preview: row.get(1)?,
+                    activity: row.get(2)?,
+                    unread: row.get(3)?,
+                    muted: row.get(4)?,
+                    pinned: row.get(5)?,
+                    is_group: row.get(6)?,
+                    archived: row.get(7)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(storage_error)
+}
+
+fn pick_canonical_jid(
+    left: &Jid,
+    left_row: Option<&ChatIdentity>,
+    right: &Jid,
+    right_row: Option<&ChatIdentity>,
+) -> Jid {
+    let left_named = left_row.is_some_and(|row| !left.name_is_placeholder(&row.name));
+    let right_named = right_row.is_some_and(|row| !right.name_is_placeholder(&row.name));
+    if left_named && !right_named {
+        return left.clone();
+    }
+    if right_named && !left_named {
+        return right.clone();
+    }
+    if !left.is_lid() && right.is_lid() {
+        return left.clone();
+    }
+    if left.is_lid() && !right.is_lid() {
+        return right.clone();
+    }
+    if left_row.is_some() {
+        return left.clone();
+    }
+    right.clone()
 }
 
 /// Persistence hooks the media pipeline needs. Written here (not in

@@ -294,6 +294,13 @@ impl WaClient {
                     EventKind::Presence,
                     EventKind::ContactUpdate,
                     EventKind::StarUpdate,
+                    // Chat-list app-state patches: archive/mute/pin flags and
+                    // the read state must survive restarts and stay in sync
+                    // with the phone.
+                    EventKind::ArchiveUpdate,
+                    EventKind::MuteUpdate,
+                    EventKind::PinUpdate,
+                    EventKind::MarkChatAsReadUpdate,
                 ],
                 move |event, _client| {
                     let bus = bus_updates.clone();
@@ -357,6 +364,21 @@ impl WaClient {
                 }
             });
             *self.calls.lock().await = Some(manager);
+        }
+
+        // Chat-list app-state (read/pin/mute/archive) on every connect so unread
+        // counts stay in sync with the phone after the first pairing.
+        {
+            let client = bot.client();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                client
+                    .process_sync_task(whatsapp_rust::sync_task::MajorSyncTask::AppStateSync {
+                        name: whatsapp_rust::wacore::appstate::patch_decode::WAPatchName::Regular,
+                        full_sync: false,
+                    })
+                    .await;
+            });
         }
 
         // One-time backfill of the phone's address book. Contacts live in the
@@ -425,6 +447,73 @@ impl WaClient {
                     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 }
                 tracing::info!(resolved, "group name pass finished");
+            });
+        }
+
+        // Direct chats that still show a phone/LID number: resolve them
+        // through usync so LID rows can be merged onto the named PN chat.
+        {
+            let client = bot.client();
+            let store = Arc::clone(&self.store);
+            let bus = self.events.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+                let targets = match store.chats_needing_contact_names(80) {
+                    Ok(targets) => targets,
+                    Err(error) => {
+                        tracing::warn!(%error, "contact name pass: listing chats failed");
+                        return;
+                    }
+                };
+                if targets.is_empty() {
+                    return;
+                }
+                let mut merged = 0usize;
+                for chunk in targets.chunks(15) {
+                    match client
+                        .contacts()
+                        .get_user_info(
+                            &chunk
+                                .iter()
+                                .filter_map(|jid| to_upstream_jid(jid).ok())
+                                .collect::<Vec<_>>(),
+                        )
+                        .await
+                    {
+                        Ok(info) => {
+                            for (upstream, user) in info {
+                                let jid = from_upstream_jid(&upstream);
+                                if let Some(lid) = user.lid.as_ref() {
+                                    match store.link_jids(&jid, &from_upstream_jid(lid)) {
+                                        Ok(Some(canonical)) => {
+                                            merged += 1;
+                                            let _ = bus.send(CoreEvent::ChatUpdated(
+                                                ChatUpdatedEvent { chat_id: canonical },
+                                            ));
+                                        }
+                                        Ok(None) => {}
+                                        Err(error) => tracing::debug!(
+                                            %error,
+                                            chat = %jid,
+                                            "contact name pass: link failed"
+                                        ),
+                                    }
+                                }
+                                if let Some(name) = user.verified_name.and_then(|v| v.name) {
+                                    let trimmed = name.trim();
+                                    if !trimmed.is_empty() {
+                                        let _ = store.apply_contact_name(&jid, trimmed);
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::debug!(%error, "contact name pass: usync failed");
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+                tracing::info!(merged, "contact name pass finished");
             });
         }
 
@@ -603,6 +692,32 @@ impl WaClient {
         result.map_err(|error| CoreError::Protocol(error.to_string()))
     }
 
+    /// Ask the primary phone for a page of older messages in a chat.
+    ///
+    /// Anchors on the oldest stored message. The reply arrives as a regular
+    /// history-sync chunk, which the history handler imports and publishes as
+    /// chat updates. Returns `false` when the chat has nothing to anchor on.
+    pub async fn fetch_older_history(&self, chat_id: &Jid, count: u32) -> Result<bool> {
+        let Some((oldest_id, oldest_from_me, oldest_ts)) = self.store.oldest_message(chat_id)?
+        else {
+            return Ok(false);
+        };
+
+        let client = self.client().await?;
+        let jid = to_upstream_jid(chat_id)?;
+        client
+            .fetch_message_history(
+                &jid,
+                &oldest_id,
+                oldest_from_me,
+                (oldest_ts * 1000) as i64,
+                count as i32,
+            )
+            .await
+            .map_err(|error| CoreError::Protocol(error.to_string()))?;
+        Ok(true)
+    }
+
     /// Subscribe to presence (online / last seen) updates for a contact.
     pub async fn subscribe_presence(&self, jid: &Jid) -> Result<()> {
         let client = self.client().await?;
@@ -745,7 +860,9 @@ fn handle_inbound_message(
 
     let message = Message {
         id: info.id.to_string(),
-        chat_id: from_upstream_jid(&info.source.chat),
+        chat_id: store
+            .canonical_jid(&from_upstream_jid(&info.source.chat))
+            .unwrap_or_else(|_| from_upstream_jid(&info.source.chat)),
         sender_id: from_upstream_jid(&info.source.sender),
         from_me: info.source.is_from_me,
         timestamp: timestamp_to_unix(&info.timestamp),
@@ -799,7 +916,9 @@ fn handle_inbound_message(
         tracing::warn!(%error, "failed to store status update");
     }
 
+    let chat_id = message.chat_id.clone();
     let _ = bus.send(CoreEvent::Message(message));
+    let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
 }
 
 /// Revokes and edits arrive as protocol messages; apply them to the store and
@@ -930,6 +1049,58 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
                 tracing::warn!(%error, "failed to store star update");
             }
         }
+        // App-state chat patches. Each one updates the local chat row and
+        // notifies the UI so the list re-renders immediately.
+        Event::ArchiveUpdate(update) => {
+            let Some(archived) = update.action.archived else {
+                return;
+            };
+            let chat_id = from_upstream_jid(&update.jid);
+            match store.set_chat_archived(&chat_id, archived) {
+                Ok(()) => {
+                    let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+                }
+                Err(error) => tracing::warn!(%error, "failed to store archive update"),
+            }
+        }
+        Event::MuteUpdate(update) => {
+            let Some(muted) = update.action.muted else {
+                return;
+            };
+            let chat_id = from_upstream_jid(&update.jid);
+            match store.set_chat_muted(&chat_id, muted) {
+                Ok(()) => {
+                    let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+                }
+                Err(error) => tracing::warn!(%error, "failed to store mute update"),
+            }
+        }
+        Event::PinUpdate(update) => {
+            let Some(pinned) = update.action.pinned else {
+                return;
+            };
+            let chat_id = from_upstream_jid(&update.jid);
+            match store.set_chat_pinned(&chat_id, pinned) {
+                Ok(()) => {
+                    let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+                }
+                Err(error) => tracing::warn!(%error, "failed to store pin update"),
+            }
+        }
+        Event::MarkChatAsReadUpdate(update) => {
+            // `read` is absent when the patch only trims a message range;
+            // treat that as "marked read" the way the official clients do.
+            if !update.action.read.unwrap_or(true) {
+                return;
+            }
+            let chat_id = from_upstream_jid(&update.jid);
+            match store.mark_chat_read(&chat_id) {
+                Ok(()) => {
+                    let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+                }
+                Err(error) => tracing::warn!(%error, "failed to store read update"),
+            }
+        }
         Event::ContactUpdate(update) => {
             let action = &update.action;
             let name = action
@@ -952,6 +1123,14 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
                 let jid = Jid::new(candidate);
                 if !targets.contains(&jid) {
                     targets.push(jid);
+                }
+            }
+
+            if targets.len() >= 2 {
+                for pair in targets.windows(2) {
+                    if let Err(error) = store.link_jids(&pair[0], &pair[1]) {
+                        tracing::debug!(%error, "failed to link contact JIDs");
+                    }
                 }
             }
 
@@ -987,6 +1166,7 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                 if chat_id.as_str().is_empty() {
                     continue;
                 }
+                let chat_id = store.canonical_jid(&chat_id).unwrap_or(chat_id);
 
                 let history_name = conversation.name.clone().unwrap_or_default();
                 let name_is_real = !history_name.trim().is_empty();
@@ -1011,6 +1191,7 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                     is_archived: conversation.archived.unwrap_or(false),
                     last_message_kind: None,
                     last_from_me: false,
+                    last_status: None,
                 };
                 if let Err(error) =
                     store.upsert_chat_from_history(&summary, name_is_real, &fallback_name)
@@ -1026,9 +1207,10 @@ fn import_history_sync(bus: &broadcast::Sender<CoreEvent>, store: &Store, sync: 
                     let Some(info) = entry.message.as_option() else {
                         continue;
                     };
-                    let Some(message) = convert_history_message(info) else {
+                    let Some(mut message) = convert_history_message(info) else {
                         continue;
                     };
+                    message.chat_id = chat_id.clone();
                     if !message.from_me
                         && !chat_id.is_group()
                         && let Some(push) = info.push_name.as_deref()

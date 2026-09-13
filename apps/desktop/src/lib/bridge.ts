@@ -32,6 +32,8 @@ export function useCoreBridge(): void {
   const setCall = useAppStore((state) => state.setCall);
   const clearCall = useAppStore((state) => state.clearCall);
   const hydrateTimer = useRef<number | null>(null);
+  const pendingReloads = useRef(new Set<string>());
+  const typingTimers = useRef<Record<string, number>>({});
   const callClearTimer = useRef<number | null>(null);
 
   const hydrateChats = useCallback(async () => {
@@ -51,6 +53,21 @@ export function useCoreBridge(): void {
     // A session that survives a restart reconnects without a QR scan; the
     // chat list may already be on disk.
     void hydrateChats();
+
+    // A UI reload (dev HMR, window recreation) does not touch the core, so
+    // ask for the live connection state before falling back to the pairing
+    // screen for an already-linked device.
+    void invokeCore<string>("core_connection_state")
+      .then((state) => {
+        if (state === "connected" && !cancelled) {
+          markPaired();
+          void hydrateChats();
+        }
+      })
+      .catch(() => {
+        // Older builds do not expose the command; the connection event
+        // still covers a fresh connect.
+      });
 
     /** Open a chat from a deep link, creating it locally when unknown. */
     const openChat = (chatId: string) => {
@@ -143,14 +160,20 @@ export function useCoreBridge(): void {
           break;
         }
 
-        case "typing":
-          useAppStore
-            .getState()
-            .setChatTyping(
-              coreEvent.payload.chatId,
-              coreEvent.payload.isTyping,
-            );
+        case "typing": {
+          const { chatId, isTyping } = coreEvent.payload;
+          useAppStore.getState().setChatTyping(chatId, isTyping);
+          const previous = typingTimers.current[chatId];
+          if (previous !== undefined) window.clearTimeout(previous);
+          if (isTyping) {
+            typingTimers.current[chatId] = window.setTimeout(() => {
+              useAppStore.getState().setChatTyping(chatId, false);
+            }, 15000);
+          } else {
+            delete typingTimers.current[chatId];
+          }
           break;
+        }
 
         case "messageStatusChanged":
           setMessageStatus(
@@ -200,11 +223,21 @@ export function useCoreBridge(): void {
           break;
 
         case "chatUpdated":
-          // History sync emits bursts of these; debounce the rehydrate.
+          // History sync emits bursts of these; debounce the rehydrate and
+          // reload any conversation that is already on screen.
+          pendingReloads.current.add(coreEvent.payload.chatId);
           if (hydrateTimer.current === null) {
             hydrateTimer.current = window.setTimeout(() => {
               hydrateTimer.current = null;
               void hydrateChats();
+              const ids = [...pendingReloads.current];
+              pendingReloads.current.clear();
+              const store = useAppStore.getState();
+              for (const id of ids) {
+                if (store.loadedChatIds[id] || store.selectedChatId === id) {
+                  store.reloadMessages(id);
+                }
+              }
             }, 400);
           }
           break;
@@ -283,6 +316,11 @@ export function useCoreBridge(): void {
         window.clearTimeout(hydrateTimer.current);
         hydrateTimer.current = null;
       }
+      for (const timer of Object.values(typingTimers.current)) {
+        window.clearTimeout(timer);
+      }
+      typingTimers.current = {};
+      pendingReloads.current.clear();
       if (callClearTimer.current !== null) {
         window.clearTimeout(callClearTimer.current);
         callClearTimer.current = null;

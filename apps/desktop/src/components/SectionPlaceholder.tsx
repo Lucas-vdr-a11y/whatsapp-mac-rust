@@ -1,7 +1,10 @@
 import { useTranslation } from "../lib/i18n";
 import type { RailSection } from "./NavigationRail";
 
-const titleKeys: Record<Exclude<RailSection, "chats">, string> = {
+const titleKeys: Record<
+  Exclude<RailSection, "chats" | "archived" | "media">,
+  string
+> = {
   status: "nav.status",
   channels: "nav.channels",
   communities: "communities.title",
@@ -11,7 +14,10 @@ const titleKeys: Record<Exclude<RailSection, "chats">, string> = {
   profile: "nav.profile",
 };
 
-const descriptionKeys: Record<Exclude<RailSection, "chats">, string> = {
+const descriptionKeys: Record<
+  Exclude<RailSection, "chats" | "archived" | "media">,
+  string
+> = {
   status: "placeholder.status",
   channels: "placeholder.channels",
   communities: "placeholder.communities",
@@ -25,7 +31,7 @@ const descriptionKeys: Record<Exclude<RailSection, "chats">, string> = {
 export function SectionPlaceholder({
   section,
 }: {
-  section: Exclude<RailSection, "chats">;
+  section: Exclude<RailSection, "chats" | "archived" | "media">;
 }) {
   const { t } = useTranslation();
 

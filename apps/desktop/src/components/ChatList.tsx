@@ -8,13 +8,10 @@ import {
 import {
   Archive,
   ExternalLink,
-  ArrowLeft,
   Ban,
   Bell,
   Briefcase,
-  ChevronRight,
   PinOff,
-  SquarePen,
   Tag,
   Trash2,
 } from "lucide-react";
@@ -31,13 +28,7 @@ import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { ConfirmDialog } from "./settings/ConfirmDialog";
 import { blockContact, privacyErrorMessage } from "./settings/privacy";
 import { NewChatModal } from "./NewChatModal";
-import {
-  BellOff,
-  CheckCheck,
-  EllipsisVertical,
-  Pin,
-  Search,
-} from "./icons";
+import { BellOff, CheckCheck, ComposeGlyph, Pin, Search } from "./icons";
 
 /** Direct chats can be blocked; groups, communities and newsletters cannot. */
 function isDirectChat(chat: ChatSummary): boolean {
@@ -69,6 +60,8 @@ interface ChatListProps {
   chats: ChatSummary[];
   selectedId: Jid | null;
   onSelect: (id: Jid) => void;
+  /** When true the list shows archived chats (opened from the rail). */
+  archivedView?: boolean;
 }
 
 
@@ -100,10 +93,16 @@ function localizedPreview(
   return chat.lastMessagePreview ?? translate("chats.noMessagesYet");
 }
 
-export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
+export function ChatList({
+  chats,
+  selectedId,
+  onSelect,
+  archivedView = false,
+}: ChatListProps) {
   const { t } = useTranslation();
   const query = useAppStore((state) => state.query);
   const setQuery = useAppStore((state) => state.setQuery);
+  const filter = useAppStore((state) => state.filter);
   const setFilter = useAppStore((state) => state.setFilter);
   const togglePinned = useAppStore((state) => state.togglePinned);
   const toggleMuted = useAppStore((state) => state.toggleMuted);
@@ -112,15 +111,9 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
   const markRead = useAppStore((state) => state.markRead);
   const deleteChat = useAppStore((state) => state.deleteChat);
 
-  // Archived chats live behind the "Archived" row; this toggles the list over
-  // to that view. It is intentionally local-only UI state.
-  const [showArchived, setShowArchived] = useState(false);
+  const showArchived = archivedView;
 
   const [newChatOpen, setNewChatOpen] = useState(false);
-  const [headerMenu, setHeaderMenu] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -346,22 +339,9 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
   return (
     <section className="chat-list">
       <header className="chat-list-header" data-tauri-drag-region>
-        {showArchived ? (
-          <div className="chat-list-title-group">
-            <button
-              type="button"
-              className="icon-button no-drag"
-              title={t("chats.backToChats")}
-              aria-label={t("chats.backToChats")}
-              onClick={() => setShowArchived(false)}
-            >
-              <ArrowLeft size={22} />
-            </button>
-            <h1 className="chat-list-title">{t("chats.archived")}</h1>
-          </div>
-        ) : (
-          <h1 className="chat-list-title">{t("chats.title")}</h1>
-        )}
+        <h1 className="chat-list-title" data-tauri-drag-region>
+          {showArchived ? t("chats.archived") : t("chats.title")}
+        </h1>
         {!showArchived && (
           <div className="header-actions no-drag">
             <button
@@ -370,20 +350,7 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
               title={t("chats.newChat")}
               onClick={() => setNewChatOpen(true)}
             >
-              <SquarePen size={23} />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              title={t("chats.filter")}
-              onClick={(event) =>
-                setHeaderMenu({
-                  x: event.clientX,
-                  y: event.clientY,
-                })
-              }
-            >
-              <EllipsisVertical size={23} />
+              <ComposeGlyph size={19} />
             </button>
           </div>
         )}
@@ -391,7 +358,7 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
 
       <div className="search-row">
         <label className="search-box">
-          <Search size={18} />
+          <Search size={17} />
           <input
             type="text"
             placeholder={t("chats.searchPlaceholder")}
@@ -400,6 +367,30 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
           />
         </label>
       </div>
+
+      {!showArchived && (
+        <div className="filters no-drag" role="tablist">
+          {(
+            [
+              { id: "all", label: t("chats.filterAll") },
+              { id: "unread", label: t("chats.filterUnread") },
+              { id: "favorites", label: t("chats.filterFavorites") },
+              { id: "groups", label: t("chats.filterGroups") },
+            ] as const
+          ).map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              role="tab"
+              aria-selected={filter === entry.id}
+              className={`filter-pill${filter === entry.id ? " active" : ""}`}
+              onClick={() => setFilter(entry.id)}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {notice ? (
         <p
@@ -412,21 +403,6 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
       ) : null}
 
       <div className="chat-items">
-        {!showArchived && trimmedQuery.length === 0 && archivedAll.length > 0 ? (
-          <button
-            type="button"
-            className="chat-archived-row"
-            onClick={() => setShowArchived(true)}
-          >
-            <span className="chat-archived-icon">
-              <Archive size={17} />
-            </span>
-            <span className="chat-archived-label">{t("chats.archived")}</span>
-            <span className="chat-archived-count">{archivedAll.length}</span>
-            <ChevronRight size={18} className="chat-archived-chevron" />
-          </button>
-        ) : null}
-
         {listedChats.map((chat) => (
           <ChatListItem
             key={chat.id}
@@ -495,31 +471,6 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
           </div>
         ) : null}
       </div>
-
-      {headerMenu && (
-        <ContextMenu
-          x={headerMenu.x}
-          y={headerMenu.y}
-          items={[
-            {
-              id: "all",
-              label: t("chats.filterAll"),
-              onSelect: () => setFilter("all"),
-            },
-            {
-              id: "unread",
-              label: t("chats.filterUnread"),
-              onSelect: () => setFilter("unread"),
-            },
-            {
-              id: "groups",
-              label: t("chats.filterGroups"),
-              onSelect: () => setFilter("groups"),
-            },
-          ]}
-          onClose={() => setHeaderMenu(null)}
-        />
-      )}
 
       {menu && (
         <ContextMenu
@@ -668,7 +619,15 @@ function ChatListItem({
             {isOwnLastMessage && (
               <CheckCheck
                 size={16}
-                style={{ color: "var(--tick-read)", flex: "none" }}
+                style={{
+                  // Blue only once the last message was read; grey while it
+                  // is merely delivered, exactly like the official client.
+                  color:
+                    chat.lastStatus === "read" || chat.lastStatus === "played"
+                      ? "var(--tick-read)"
+                      : "var(--text-secondary)",
+                  flex: "none",
+                }}
               />
             )}
             <span className="preview-text">

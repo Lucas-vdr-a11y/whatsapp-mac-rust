@@ -1,22 +1,24 @@
 import type { ReactNode } from "react";
-import { Star } from "lucide-react";
 import { useTranslation } from "../lib/i18n";
 import { useAppStore } from "../store/app";
 import {
-  CircleDashed,
-  MessageCircle,
-  Phone,
-  RadioTower,
-  Settings,
-  UserRound,
+  ArchiveGlyph,
+  CallsGlyph,
+  ChatsGlyph,
+  MediaGlyph,
+  SettingsGlyph,
+  StarGlyph,
+  StatusGlyph,
 } from "./icons";
 
 export type RailSection =
   | "chats"
   | "calls"
   | "status"
-  | "channels"
+  | "archived"
   | "starred"
+  | "media"
+  | "channels"
   | "communities"
   | "settings"
   | "profile";
@@ -27,20 +29,23 @@ interface RailItem {
   icon: ReactNode;
 }
 
-// Order mirrors the official macOS app: Chats, Calls, Status, Channels,
-// Starred. Communities live inside the chat list in the official client, so
-// they are reachable but not a rail item here either.
+// Order mirrors the official macOS app: Chats, Calls, Updates, then Archived
+// and Starred behind a divider, with Media and Settings pinned to the bottom.
+// Channels, communities and the profile live inside the chat list/settings.
 const primaryItems: RailItem[] = [
-  { id: "chats", labelKey: "nav.chats", icon: <MessageCircle size={24} /> },
-  { id: "calls", labelKey: "nav.calls", icon: <Phone size={24} /> },
-  { id: "status", labelKey: "nav.status", icon: <CircleDashed size={24} /> },
-  { id: "channels", labelKey: "nav.channels", icon: <RadioTower size={24} /> },
-  { id: "starred", labelKey: "nav.starred", icon: <Star size={24} /> },
+  { id: "chats", labelKey: "nav.chats", icon: <ChatsGlyph size={24} /> },
+  { id: "calls", labelKey: "nav.calls", icon: <CallsGlyph size={24} /> },
+  { id: "status", labelKey: "nav.status", icon: <StatusGlyph size={24} /> },
+];
+
+const archivedItems: RailItem[] = [
+  { id: "archived", labelKey: "nav.archived", icon: <ArchiveGlyph size={24} /> },
+  { id: "starred", labelKey: "nav.starred", icon: <StarGlyph size={24} /> },
 ];
 
 const secondaryItems: RailItem[] = [
-  { id: "settings", labelKey: "nav.settings", icon: <Settings size={24} /> },
-  { id: "profile", labelKey: "nav.profile", icon: <UserRound size={24} /> },
+  { id: "media", labelKey: "nav.media", icon: <MediaGlyph size={24} /> },
+  { id: "settings", labelKey: "nav.settings", icon: <SettingsGlyph size={24} /> },
 ];
 
 interface NavigationRailProps {
@@ -56,13 +61,13 @@ export function NavigationRail({
 }: NavigationRailProps) {
   const { t } = useTranslation();
 
-  // Channels badge parity: unread from newsletter chats. Muted channels are
-  // excluded, matching how the Chats badge counts in App.tsx.
-  const channelUnreadCount = useAppStore((state) =>
+  // The archived badge counts unread archived chats only; muted chats do not
+  // contribute, mirroring the chats badge.
+  const archivedUnreadCount = useAppStore((state) =>
     state.chats.reduce(
       (sum, chat) =>
         sum +
-        (chat.id.endsWith("@newsletter") && !chat.muted ? chat.unreadCount : 0),
+        (chat.isArchived && !chat.muted ? chat.unreadCount : 0),
       0,
     ),
   );
@@ -71,9 +76,10 @@ export function NavigationRail({
     const badgeCount =
       item.id === "chats"
         ? unreadCount
-        : item.id === "channels"
-          ? channelUnreadCount
+        : item.id === "archived"
+          ? archivedUnreadCount
           : 0;
+    const textBadge = item.id === "archived";
     return (
       <button
         key={item.id}
@@ -81,12 +87,14 @@ export function NavigationRail({
         title={t(item.labelKey)}
         aria-label={t(item.labelKey)}
         aria-current={active === item.id ? "page" : undefined}
-        className={`rail-button${active === item.id ? " active" : ""}`}
+        className={`rail-button${active === item.id ? " active" : ""}${
+          textBadge ? " rail-button--text-badge" : ""
+        }`}
         onClick={() => onSelect(item.id)}
       >
         {item.icon}
         {badgeCount > 0 && (
-          <span className="badge">
+          <span className={textBadge ? "count" : "badge"}>
             {badgeCount > 99 ? "99+" : badgeCount}
           </span>
         )}
@@ -98,8 +106,12 @@ export function NavigationRail({
     <nav className="rail">
       <div className="chrome-inset" data-tauri-drag-region />
       <div className="rail-nav">{primaryItems.map(renderItem)}</div>
+      <div className="rail-divider" />
+      <div className="rail-nav">{archivedItems.map(renderItem)}</div>
       <div className="rail-spacer" data-tauri-drag-region />
-      <div className="rail-nav">{secondaryItems.map(renderItem)}</div>
+      <div className="rail-nav rail-nav--bottom">
+        {secondaryItems.map(renderItem)}
+      </div>
     </nav>
   );
 }
