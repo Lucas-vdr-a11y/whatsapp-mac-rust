@@ -103,18 +103,23 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 | Milestone | Scope | Status |
 |---|---|---|
-| M0 Bootstrap | workspace, CI, docs, UI shell | ✅ this PR |
-| M1 Protocol core | pairing (QR), connect, session persistence, text send/receive, receipts, presence | 🚧 next |
-| M2 Chat UI | chat list, conversation view, composer, message states | ⏳ |
-| M3 Media | images, video, documents, voice notes, stickers, link previews | ⏳ |
-| M4 Groups & communities | group chat, admin, communities | ⏳ |
-| M5 Channels & status | newsletters, status/stories | ⏳ |
-| M6 Calls | voice/video (research spike; hardest item) | ⏳ |
-| M7 Platform integration | notifications, dock badge, global shortcuts, share sheet, Siri | ⏳ |
-| M8 Parity audit | feature-by-feature sign-off against the official app | ⏳ |
+| M0 Core connection | pairing (QR / pair code / passkey), history sync, reconnect, media pipeline | 🚧 in progress |
+| M1 Everyday messaging | text, replies, receipts, typing, presence, notifications | ⏳ |
+| M2 Chat management | archive/pin/mute/delete, starred, search, favorites | ⏳ |
+| M3 Media experience | images, video, voice, documents, stickers, view-once, disappearing | ⏳ |
+| M4 Message actions | reactions, edit, revoke, pins, forwarding, polls, events | ⏳ |
+| M5 Groups & communities | admin, invite links, join requests, communities | ⏳ |
+| M6 Status & channels | status/stories, channels/newsletters | ⏳ |
+| M7 Calls | 1:1 audio/video, screen share, call links, group calls | ⏳ |
+| M8 Privacy & security | privacy settings, app lock, chat lock, verification, proxy | ⏳ |
+| M9 System integration | Siri, Shortcuts, widgets, share sheet, menu bar, deep links | ⏳ |
+| M10 Power features | business profiles, catalog, labels, quick replies, usernames | ⏳ |
+| M12 Out of scope | payments, Meta AI, interop bridges, E2E backups (Meta-gated) | ❌ |
 
-Full details in [docs/ROADMAP.md](docs/ROADMAP.md); feature research lives in
-[docs/research/](docs/research/).
+The full evidence-backed plan — every feature of the official app mapped
+against the open-source protocol stacks — lives in
+[docs/parity-matrix.md](docs/parity-matrix.md); see
+[docs/ROADMAP.md](docs/ROADMAP.md) for the condensed version.
 
 ## Legal & safety
 
