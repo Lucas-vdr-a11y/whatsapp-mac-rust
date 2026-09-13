@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Star } from "lucide-react";
 import { useTranslation } from "../lib/i18n";
+import { useAppStore } from "../store/app";
 import {
   CircleDashed,
   MessageCircle,
@@ -55,22 +56,43 @@ export function NavigationRail({
 }: NavigationRailProps) {
   const { t } = useTranslation();
 
-  const renderItem = (item: RailItem) => (
-    <button
-      key={item.id}
-      type="button"
-      title={t(item.labelKey)}
-      aria-label={t(item.labelKey)}
-      aria-current={active === item.id ? "page" : undefined}
-      className={`rail-button${active === item.id ? " active" : ""}`}
-      onClick={() => onSelect(item.id)}
-    >
-      {item.icon}
-      {item.id === "chats" && unreadCount > 0 && (
-        <span className="badge">{unreadCount > 99 ? "99+" : unreadCount}</span>
-      )}
-    </button>
+  // Channels badge parity: unread from newsletter chats. Muted channels are
+  // excluded, matching how the Chats badge counts in App.tsx.
+  const channelUnreadCount = useAppStore((state) =>
+    state.chats.reduce(
+      (sum, chat) =>
+        sum +
+        (chat.id.endsWith("@newsletter") && !chat.muted ? chat.unreadCount : 0),
+      0,
+    ),
   );
+
+  const renderItem = (item: RailItem) => {
+    const badgeCount =
+      item.id === "chats"
+        ? unreadCount
+        : item.id === "channels"
+          ? channelUnreadCount
+          : 0;
+    return (
+      <button
+        key={item.id}
+        type="button"
+        title={t(item.labelKey)}
+        aria-label={t(item.labelKey)}
+        aria-current={active === item.id ? "page" : undefined}
+        className={`rail-button${active === item.id ? " active" : ""}`}
+        onClick={() => onSelect(item.id)}
+      >
+        {item.icon}
+        {badgeCount > 0 && (
+          <span className="badge">
+            {badgeCount > 99 ? "99+" : badgeCount}
+          </span>
+        )}
+      </button>
+    );
+  };
 
   return (
     <nav className="rail">

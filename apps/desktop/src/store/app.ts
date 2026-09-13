@@ -194,8 +194,11 @@ interface AppState {
   togglePinned: (id: Jid) => void;
   toggleMuted: (id: Jid) => void;
   archiveChat: (id: Jid) => void;
+  unarchiveChat: (id: Jid) => void;
   markRead: (id: Jid) => void;
   deleteChat: (id: Jid) => void;
+  /** Clear a chat's messages locally and via `chat_clear`; rejects on IPC error. */
+  clearChat: (id: Jid) => Promise<void>;
   /** Selects an existing chat or creates an empty one for a new contact. */
   startChat: (id: Jid, name: string, isGroup?: boolean) => void;
 
@@ -644,6 +647,16 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
+    unarchiveChat: (id) => {
+      patchChat(id, () => ({ isArchived: false }));
+      if (isTauri()) {
+        void invokeCore("set_chat_archived", {
+          chatId: id,
+          archived: false,
+        }).catch((error) => console.error("set_chat_archived failed", error));
+      }
+    },
+
     markRead: (id) => {
       patchChat(id, () => ({ unreadCount: 0 }));
       if (isTauri()) {
@@ -664,6 +677,19 @@ export const useAppStore = create<AppState>((set, get) => {
             state.selectedChatId === id ? null : state.selectedChatId,
         };
       }),
+
+    clearChat: async (id) => {
+      // The core clears the account-side history (`chat_clear`); local rows are
+      // dropped here because the core's store has no clear helper yet.
+      if (isTauri()) {
+        await invokeCore("chat_clear", { chatId: id });
+      }
+      set((state) => {
+        const messages = { ...state.messages };
+        delete messages[id];
+        return { messages };
+      });
+    },
 
     startChat: (id, name, isGroup = false) =>
       set((state) => {

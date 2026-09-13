@@ -103,6 +103,13 @@
   letter-spacing: -0.2px;
 }
 
+.chat-list-title-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -301,6 +308,54 @@
   color: var(--text-secondary);
 }
 
+/* "Archived" entry pinned above the chat rows (WhatsApp-style). */
+.chat-archived-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  height: 56px;
+  padding: 0 16px;
+  text-align: left;
+  color: var(--text-primary);
+}
+
+.chat-archived-row:hover {
+  background: var(--bg-hover);
+}
+
+.chat-archived-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  color: var(--accent-strong);
+  background: var(--bg-hover);
+}
+
+.chat-archived-label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-list-name);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-archived-count {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+
+.chat-archived-chevron {
+  flex: none;
+  color: var(--text-secondary);
+}
+
 /* ------------------------------------------------------------------ */
 /* Conversation                                                         */
 /* ------------------------------------------------------------------ */
@@ -311,6 +366,21 @@
   min-width: 0;
   height: 100%;
   background: var(--bg-chat);
+}
+
+/* Group info opens as a right-side drawer over the conversation. */
+.conversation-info-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1500;
+  display: flex;
+  box-shadow: var(--shadow-modal);
+}
+
+.conversation-info-drawer .group-info-panel {
+  border-left: 0;
 }
 
 .conversation-header {

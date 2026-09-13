@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Archive, Bell, BellOff, CheckCheck, Info, Trash2 } from "lucide-react";
 import { avatarSrc } from "../lib/avatar";
-import { useTranslation } from "../lib/i18n";
+import { t, useTranslation } from "../lib/i18n";
 import { initials } from "../lib/names";
 import { formatBubbleTime, formatDateDivider } from "../lib/time";
 import type { ChatSummary, Jid, Message } from "../lib/types";
@@ -8,8 +9,11 @@ import { useAppStore, type MessageQuote } from "../store/app";
 import { AttachmentMenu, type AttachmentKind } from "./AttachmentMenu";
 import { PollComposer } from "./message/PollComposer";
 import { CallOverlay } from "./calls/CallOverlay";
+import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { DRAFT_SAVE_DELAY_MS, readDraft, writeDraft } from "./composer/drafts";
 import { MentionMenu } from "./composer/MentionMenu";
+import { GroupInfoPanel } from "./groups/GroupInfoPanel";
+import { ConfirmDialog } from "./settings/ConfirmDialog";
 import {
   deriveGroupParticipants,
   findMentionTrigger,
@@ -41,9 +45,12 @@ const EMPTY_PARTICIPANTS: MentionParticipant[] = [];
 
 interface ConversationProps {
   chat: ChatSummary;
+  /** Optional host hook for a contact-info panel; the header menu enables its
+   * "Contact info" item only when this is provided (direct chats). */
+  onOpenContactInfo?: (chat: ChatSummary) => void;
 }
 
-export function Conversation({ chat }: ConversationProps) {
+export function Conversation({ chat, onOpenContactInfo }: ConversationProps) {
   const messages = useAppStore(
     (state) => state.messages[chat.id] ?? EMPTY_MESSAGES,
   );
@@ -125,7 +132,10 @@ export function Conversation({ chat }: ConversationProps) {
 
   return (
     <section className="conversation">
-      <ConversationHeader chat={chat} />
+      <ConversationHeader
+        chat={chat}
+        onOpenContactInfo={onOpenContactInfo}
+      />
       <div className="messages" ref={scrollRef}>
         {renderMessages(messages, chat, startEditing)}
       </div>
@@ -166,13 +176,105 @@ export function EmptyConversation() {
   );
 }
 
-function ConversationHeader({ chat }: { chat: ChatSummary }) {
+function ConversationHeader({
+  chat,
+  onOpenContactInfo,
+}: {
+  chat: ChatSummary;
+  onOpenContactInfo?: (chat: ChatSummary) => void;
+}) {
   const { t } = useTranslation();
   const typing = useAppStore(
     (state) => state.typingByChat[chat.id] ?? false,
   );
   const startCall = useAppStore((state) => state.startCall);
   const presence = useAppStore((state) => state.presenceByChat[chat.id]);
+  const toggleMuted = useAppStore((state) => state.toggleMuted);
+  const archiveChat = useAppStore((state) => state.archiveChat);
+  const unarchiveChat = useAppStore((state) => state.unarchiveChat);
+  const markRead = useAppStore((state) => state.markRead);
+  const clearChat = useAppStore((state) => state.clearChat);
+
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
+
+  // Switching chats closes any overlay that belongs to the previous one.
+  useEffect(() => {
+    setMenu(null);
+    setInfoOpen(false);
+    setClearOpen(false);
+    setClearBusy(false);
+    setClearError(null);
+  }, [chat.id]);
+
+  const menuItems: ContextMenuEntry[] = [
+    chat.isGroup
+      ? {
+          id: "group-info",
+          label: t("groups.info"),
+          icon: Info,
+          onSelect: () => setInfoOpen(true),
+        }
+      : onOpenContactInfo
+        ? {
+            id: "contact-info",
+            label: t("conversation.menu.contactInfo"),
+            icon: Info,
+            onSelect: () => onOpenContactInfo(chat),
+          }
+        : {
+            id: "contact-info",
+            label: t("conversation.menu.contactInfoUnavailable"),
+            icon: Info,
+            disabled: true,
+            onSelect: () => {},
+          },
+    {
+      id: "mute",
+      label: chat.muted ? t("chats.menu.unmute") : t("chats.menu.mute"),
+      icon: chat.muted ? Bell : BellOff,
+      onSelect: () => toggleMuted(chat.id),
+    },
+    {
+      id: "archive",
+      label: chat.isArchived
+        ? t("chats.menu.unarchive")
+        : t("chats.menu.archive"),
+      icon: Archive,
+      onSelect: () =>
+        chat.isArchived ? unarchiveChat(chat.id) : archiveChat(chat.id),
+    },
+    {
+      id: "read",
+      label: t("chats.menu.markRead"),
+      icon: CheckCheck,
+      disabled: chat.unreadCount === 0,
+      onSelect: () => markRead(chat.id),
+    },
+    { kind: "separator", id: "menu-separator" },
+    {
+      id: "clear",
+      label: t("conversation.menu.clearChat"),
+      icon: Trash2,
+      danger: true,
+      onSelect: () => {
+        setClearError(null);
+        setClearOpen(true);
+      },
+    },
+  ];
+
+  const confirmClear = () => {
+    setClearBusy(true);
+    setClearError(null);
+    void clearChat(chat.id)
+      .then(() => setClearOpen(false))
+      .catch((cause: unknown) => setClearError(clearErrorMessage(cause)))
+      .finally(() => setClearBusy(false));
+  };
 
   const subtitle = typing
     ? t("conversation.typing")
@@ -187,46 +289,101 @@ function ConversationHeader({ chat }: { chat: ChatSummary }) {
           : null;
 
   return (
-    <header className="conversation-header" data-tauri-drag-region>
-      <ConversationAvatar chat={chat} />
-      <div className="conversation-title" data-tauri-drag-region>
-        <span className="conversation-name">{chat.name}</span>
-        {subtitle && <span className="conversation-subtitle">{subtitle}</span>}
-      </div>
-      <div className="header-actions no-drag">
-        <button
-          type="button"
-          className="icon-button"
-          title={t("common.search")}
-        >
-          <Search size={22} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          title={t("conversation.voiceCall")}
-          onClick={() => startCall(chat.id, false)}
-        >
-          <Phone size={22} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          title={t("conversation.videoCall")}
-          onClick={() => startCall(chat.id, true)}
-        >
-          <Video size={22} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          title={t("common.menu")}
-        >
-          <EllipsisVertical size={22} />
-        </button>
-      </div>
-    </header>
+    <>
+      <header className="conversation-header" data-tauri-drag-region>
+        <ConversationAvatar chat={chat} />
+        <div className="conversation-title" data-tauri-drag-region>
+          <span className="conversation-name">{chat.name}</span>
+          {subtitle && <span className="conversation-subtitle">{subtitle}</span>}
+        </div>
+        <div className="header-actions no-drag">
+          <button
+            type="button"
+            className="icon-button"
+            title={t("common.search")}
+          >
+            <Search size={22} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            title={t("conversation.voiceCall")}
+            onClick={() => startCall(chat.id, false)}
+          >
+            <Phone size={22} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            title={t("conversation.videoCall")}
+            onClick={() => startCall(chat.id, true)}
+          >
+            <Video size={22} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            title={t("common.menu")}
+            aria-haspopup="menu"
+            aria-expanded={menu !== null}
+            onClick={(event) =>
+              setMenu({ x: event.clientX, y: event.clientY })
+            }
+          >
+            <EllipsisVertical size={22} />
+          </button>
+        </div>
+      </header>
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuItems}
+          onClose={() => setMenu(null)}
+        />
+      )}
+
+      {infoOpen && chat.isGroup ? (
+        <div className="conversation-info-drawer">
+          <GroupInfoPanel
+            chatId={chat.id}
+            onClose={() => setInfoOpen(false)}
+          />
+        </div>
+      ) : null}
+
+      <ConfirmDialog
+        open={clearOpen}
+        title={t("conversation.clearTitle")}
+        body={t("conversation.clearBody")}
+        confirmLabel={t("conversation.menu.clearChat")}
+        danger
+        busy={clearBusy}
+        error={clearError}
+        onCancel={() => {
+          if (clearBusy) return;
+          setClearOpen(false);
+          setClearError(null);
+        }}
+        onConfirm={confirmClear}
+      />
+    </>
   );
+}
+
+/** Human copy for a failed `chat_clear` (`clearChat` rejects with raw IPC errors). */
+function clearErrorMessage(cause: unknown): string {
+  const raw =
+    cause instanceof Error
+      ? cause.message
+      : typeof cause === "string"
+        ? cause
+        : "";
+  if (/not connected|not linked|not paired|disconnected/i.test(raw)) {
+    return t("conversation.clearNeedsConnection");
+  }
+  return raw || t("conversation.clearError");
 }
 
 function ConversationAvatar({ chat }: { chat: ChatSummary }) {

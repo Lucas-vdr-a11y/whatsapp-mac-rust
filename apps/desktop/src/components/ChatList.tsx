@@ -435,7 +435,9 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
               textAlign: "center",
             }}
           >
-            {showArchived ? t("chats.archivedEmpty") : t("chats.empty")}
+            {showArchived && !trimmedQuery
+              ? t("chats.archivedEmpty")
+              : t("chats.empty")}
           </p>
         )}
 
