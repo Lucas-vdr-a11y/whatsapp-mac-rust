@@ -7,9 +7,11 @@ import {
 } from "react";
 import {
   Archive,
+  ArrowLeft,
   Ban,
   Bell,
   Briefcase,
+  ChevronRight,
   PinOff,
   SquarePen,
   Tag,
@@ -69,7 +71,11 @@ interface ChatListProps {
 }
 
 
-/** Localized chat-list preview: media kinds render as labels, text as-is. */
+/** Localized chat-list preview: media kinds render as labels, text as-is.
+ *
+ * Group previews are not prefixed with the sender name: the core's
+ * `ChatSummary` has no last-message sender field yet. Add the prefix here once
+ * `list_chats` carries one. */
 function localizedPreview(
   chat: ChatSummary,
   translate: (key: string) => string,
@@ -86,6 +92,7 @@ function localizedPreview(
     location: "media.location",
     contact: "media.contact",
     poll: "media.poll",
+    unsupported: "media.message",
   };
   const key = kind ? labels[kind] : undefined;
   if (key) return translate(key);
@@ -100,8 +107,13 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
   const togglePinned = useAppStore((state) => state.togglePinned);
   const toggleMuted = useAppStore((state) => state.toggleMuted);
   const archiveChat = useAppStore((state) => state.archiveChat);
+  const unarchiveChat = useAppStore((state) => state.unarchiveChat);
   const markRead = useAppStore((state) => state.markRead);
   const deleteChat = useAppStore((state) => state.deleteChat);
+
+  // Archived chats live behind the "Archived" row; this toggles the list over
+  // to that view. It is intentionally local-only UI state.
+  const [showArchived, setShowArchived] = useState(false);
 
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [headerMenu, setHeaderMenu] = useState<{
@@ -154,6 +166,24 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
   }, [allChats]);
 
   const trimmedQuery = query.trim();
+
+  // Archived chats stay out of the main list. Pinned first, then newest,
+  // mirroring the store's ordering; the query filters archived names only.
+  const archivedAll = useMemo(
+    () => allChats.filter((chat) => chat.isArchived),
+    [allChats],
+  );
+  const archivedChats = useMemo(() => {
+    const needle = trimmedQuery.toLowerCase();
+    return archivedAll
+      .filter((chat) => !needle || chat.name.toLowerCase().includes(needle))
+      .sort((a, b) => {
+        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+        return b.lastActivityTs - a.lastActivityTs;
+      });
+  }, [archivedAll, trimmedQuery]);
+
+  const listedChats = showArchived ? archivedChats : chats;
 
   // The block confirmation is deliberately transient: nothing changes in the
   // local chat list when a contact is blocked.
@@ -267,9 +297,14 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
         },
         {
           id: "archive",
-          label: t("chats.menu.archive"),
+          label: menu.chat.isArchived
+            ? t("chats.menu.unarchive")
+            : t("chats.menu.archive"),
           icon: Archive,
-          onSelect: () => archiveChat(menu.chat.id),
+          onSelect: () =>
+            menu.chat.isArchived
+              ? unarchiveChat(menu.chat.id)
+              : archiveChat(menu.chat.id),
         },
         {
           id: "read",
@@ -302,30 +337,47 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
   return (
     <section className="chat-list">
       <header className="chat-list-header" data-tauri-drag-region>
-        <h1 className="chat-list-title">{t("chats.title")}</h1>
-        <div className="header-actions no-drag">
-          <button
-            type="button"
-            className="icon-button"
-            title={t("chats.newChat")}
-            onClick={() => setNewChatOpen(true)}
-          >
-            <SquarePen size={23} />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            title={t("chats.filter")}
-            onClick={(event) =>
-              setHeaderMenu({
-                x: event.clientX,
-                y: event.clientY,
-              })
-            }
-          >
-            <EllipsisVertical size={23} />
-          </button>
-        </div>
+        {showArchived ? (
+          <div className="chat-list-title-group">
+            <button
+              type="button"
+              className="icon-button no-drag"
+              title={t("chats.backToChats")}
+              aria-label={t("chats.backToChats")}
+              onClick={() => setShowArchived(false)}
+            >
+              <ArrowLeft size={22} />
+            </button>
+            <h1 className="chat-list-title">{t("chats.archived")}</h1>
+          </div>
+        ) : (
+          <h1 className="chat-list-title">{t("chats.title")}</h1>
+        )}
+        {!showArchived && (
+          <div className="header-actions no-drag">
+            <button
+              type="button"
+              className="icon-button"
+              title={t("chats.newChat")}
+              onClick={() => setNewChatOpen(true)}
+            >
+              <SquarePen size={23} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              title={t("chats.filter")}
+              onClick={(event) =>
+                setHeaderMenu({
+                  x: event.clientX,
+                  y: event.clientY,
+                })
+              }
+            >
+              <EllipsisVertical size={23} />
+            </button>
+          </div>
+        )}
       </header>
 
       <div className="search-row">
@@ -351,7 +403,22 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
       ) : null}
 
       <div className="chat-items">
-        {chats.map((chat) => (
+        {!showArchived && trimmedQuery.length === 0 && archivedAll.length > 0 ? (
+          <button
+            type="button"
+            className="chat-archived-row"
+            onClick={() => setShowArchived(true)}
+          >
+            <span className="chat-archived-icon">
+              <Archive size={17} />
+            </span>
+            <span className="chat-archived-label">{t("chats.archived")}</span>
+            <span className="chat-archived-count">{archivedAll.length}</span>
+            <ChevronRight size={18} className="chat-archived-chevron" />
+          </button>
+        ) : null}
+
+        {listedChats.map((chat) => (
           <ChatListItem
             key={chat.id}
             chat={chat}
@@ -360,7 +427,7 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
             onContextMenu={(event) => openMenu(event, chat)}
           />
         ))}
-        {chats.length === 0 && (
+        {listedChats.length === 0 && (
           <p
             style={{
               padding: "32px 24px",
@@ -368,11 +435,11 @@ export function ChatList({ chats, selectedId, onSelect }: ChatListProps) {
               textAlign: "center",
             }}
           >
-            {t("chats.empty")}
+            {showArchived ? t("chats.archivedEmpty") : t("chats.empty")}
           </p>
         )}
 
-        {trimmedQuery.length >= 2 ? (
+        {!showArchived && trimmedQuery.length >= 2 ? (
           <div className="search-results">
             <p className="search-results-title">
               {t("chats.searchResultsTitle")}
