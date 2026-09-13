@@ -1,0 +1,190 @@
+/* Call overlay and calls screen.
+ * Owned by the calls-UI workstream. */
+
+/* ------------------------------------------------------------------ */
+/* Live call overlay                                                    */
+/* ------------------------------------------------------------------ */
+
+.call-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.call-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: min(340px, calc(100vw - 48px));
+  padding: 28px 24px 22px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-modal);
+  box-shadow: var(--shadow-modal);
+  text-align: center;
+}
+
+.call-card.video {
+  width: min(420px, calc(100vw - 48px));
+}
+
+.call-avatar {
+  width: 96px;
+  height: 96px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: #6a7175;
+  color: #fff;
+  font-size: 34px;
+  font-weight: 500;
+  overflow: hidden;
+}
+
+.call-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Video variant stand-in until the media backend provides a stream. */
+.call-video-tile {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: #0b0f10;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.call-video-note {
+  max-width: 250px;
+  font-size: 12.5px;
+  line-height: 17px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.call-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.call-name {
+  max-width: 100%;
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.call-state {
+  font-size: 15px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.call-state.timer {
+  font-size: 17px;
+  color: var(--text-primary);
+}
+
+.call-kind {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.call-reason {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--danger);
+}
+
+.call-controls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 22px;
+  margin-top: 10px;
+}
+
+.call-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+}
+
+.call-action-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.call-control {
+  width: 60px;
+  height: 60px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  color: #fff;
+  transition:
+    background 120ms ease,
+    transform 120ms ease;
+}
+
+.call-control:active {
+  transform: scale(0.94);
+}
+
+.call-control.neutral {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.call-control.neutral:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+/* Muted: invert the control so the state reads at a glance. */
+.call-control.neutral.on {
+  background: var(--text-primary);
+  color: var(--text-inverse);
+}
+
+.call-control.hangup {
+  background: var(--danger);
+}
+
+.call-control.hangup:hover {
+  filter: brightness(1.1);
+}
+
+.call-control.accept {
+  background: var(--accent);
+}
+
+.call-control.accept:hover {
+  filter: brightness(1.1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Calls screen                                                        */
+/* ------------------------------------------------------------------ */
+
+.calls-sync-note {
+  margin-top: 12px;
+}

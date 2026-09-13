@@ -5,6 +5,7 @@ import { formatDateDivider } from "../lib/time";
 import type { ChatSummary, Message } from "../lib/types";
 import { useAppStore, type MessageQuote } from "../store/app";
 import { AttachmentMenu, type AttachmentKind } from "./AttachmentMenu";
+import { CallOverlay } from "./calls/CallOverlay";
 import { EmojiPicker } from "./EmojiPicker";
 import { MessageBubble } from "./message/MessageBubble";
 import {
@@ -111,6 +112,7 @@ export function Conversation({ chat }: ConversationProps) {
         onCancelEdit={() => setEditing(null)}
         onSaveEdit={saveEdit}
       />
+      <CallOverlay />
     </section>
   );
 }
@@ -132,6 +134,7 @@ export function EmptyConversation() {
         <span>🔒</span>
         <span>End-to-end encrypted</span>
       </div>
+      <CallOverlay />
     </section>
   );
 }
@@ -140,6 +143,7 @@ function ConversationHeader({ chat }: { chat: ChatSummary }) {
   const typing = useAppStore(
     (state) => state.typingByChat[chat.id] ?? false,
   );
+  const startCall = useAppStore((state) => state.startCall);
 
   return (
     <header className="conversation-header" data-tauri-drag-region>
@@ -154,10 +158,20 @@ function ConversationHeader({ chat }: { chat: ChatSummary }) {
         <button type="button" className="icon-button" title="Search">
           <Search size={22} />
         </button>
-        <button type="button" className="icon-button" title="Voice call">
+        <button
+          type="button"
+          className="icon-button"
+          title="Voice call"
+          onClick={() => startCall(chat.id, false)}
+        >
           <Phone size={22} />
         </button>
-        <button type="button" className="icon-button" title="Video call">
+        <button
+          type="button"
+          className="icon-button"
+          title="Video call"
+          onClick={() => startCall(chat.id, true)}
+        >
           <Video size={22} />
         </button>
         <button type="button" className="icon-button" title="Menu">

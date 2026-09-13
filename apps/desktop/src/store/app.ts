@@ -31,6 +31,84 @@ export interface MessageQuote {
   senderName?: string;
 }
 
+/** Lifecycle stage the calls UI renders. `idle` means no overlay. */
+export type CallUiState =
+  | "idle"
+  | "ringing-in"
+  | "ringing-out"
+  | "connecting"
+  | "active"
+  | "ended";
+
+/** Snapshot of one call (`whatsapp_core::calls::manager::CallInfo`, camelCase
+ * over IPC). `callId` is absent on the optimistic outgoing echo, before the
+ * core has assigned one. */
+export interface CallInfo {
+  callId?: string;
+  chatId: Jid;
+  video: boolean;
+  /** Unix seconds when the call was placed or started ringing. */
+  timestamp: number;
+}
+
+/** Core call phase (`whatsapp_core::calls::manager::CallState`). */
+export type CoreCallState =
+  | "ringing"
+  | "calling"
+  | "connecting"
+  | "active"
+  | "ended"
+  | "failed";
+
+/** Payload of the core's `call` event (`calls::manager::CallUpdate`,
+ * serde-tagged with `type` / `payload` and camelCase fields). */
+export type CallUpdate =
+  | { type: "ringing"; payload: CallInfo }
+  | { type: "missed"; payload: CallInfo }
+  | {
+      type: "endedElsewhere";
+      payload: {
+        callId: string;
+        chatId: Jid;
+        accepted: boolean;
+        timestamp: number;
+      };
+    }
+  | {
+      type: "phase";
+      payload: { callId: string; state: CoreCallState; reason: string | null };
+    }
+  | { type: "ended"; payload: { callId: string } };
+
+/** One row in the session's call history. Phone-synced history lands later. */
+export interface CallHistoryEntry {
+  /** Server call id when known; synthetic for local-only entries. */
+  id: string;
+  chatId: Jid;
+  direction: "incoming" | "outgoing" | "missed";
+  video: boolean;
+  /** Unix seconds. */
+  startedAt: number;
+  durationSecs: number | null;
+}
+
+/** The call currently shown in the overlay. */
+export interface CallSession {
+  callId?: string;
+  chatId?: Jid;
+  info?: CallInfo;
+  state: CallUiState;
+  muted: boolean;
+  /** User-facing detail: "Missed call", a failure reason, ended-elsewhere. */
+  reason?: string;
+  /** Which side placed the call; drives the history direction. */
+  direction?: "incoming" | "outgoing";
+  /** Unix seconds when the call was placed or started ringing. */
+  startedAt?: number;
+  /** Unix seconds when media went live; backs the duration timer. */
+  activeSince?: number;
+}
+
 interface AppState {
   chats: ChatSummary[];
   /** Messages per chat id, oldest first. */
@@ -142,10 +220,35 @@ interface AppState {
   setAvatar: (chatId: Jid, avatar: string) => void;
   /** Best-effort avatar fetch, once per chat. */
   loadAvatar: (chatId: Jid) => void;
+
+  /** Live call state; `idle` means no overlay is shown. */
+  callState: CallSession;
+  /** Calls from this session, newest first. */
+  callHistory: CallHistoryEntry[];
+  /** Route a core `call` event into the overlay (records history). */
+  setCall: (update: CallUpdate) => void;
+  /** Dismiss the overlay, optionally only when it still shows `callId`. */
+  clearCall: (callId?: string) => void;
+  /** Toggle the local microphone (`calls_mute`). */
+  setCallMuted: (muted: boolean) => void;
+  /** Place an outgoing voice/video call (`calls_start`). */
+  startCall: (chatId: Jid, video: boolean) => void;
+  /** Hang up or cancel the call with `chatId` (`calls_end`). */
+  endCall: (chatId: Jid) => void;
+  /** Accept a ringing incoming call (`calls_answer`). */
+  answerCall: (callId: string) => void;
+  /** Decline a ringing incoming call (`calls_reject`). */
+  rejectCall: (callId: string) => void;
 }
 
 /** In a plain browser we run on mock data; inside Tauri the core fills state. */
 const mockMode = !isTauri();
+
+/** Shared "no call in progress" session; never mutated in place. */
+const IDLE_CALL: CallSession = { state: "idle", muted: false };
+
+/** Copy for the reality of this build: calling needs the media backend. */
+const CALLS_UNAVAILABLE = "Calling isn't available yet on this build/device.";
 
 export const useAppStore = create<AppState>((set, get) => {
   /** Applies a patch to a single chat, leaving the rest of the list alone. */
@@ -182,6 +285,8 @@ export const useAppStore = create<AppState>((set, get) => {
     myReactions: {},
     deletedMessages: {},
     starred: {},
+    callState: IDLE_CALL,
+    callHistory: [],
 
     selectChat: (id) => set({ selectedChatId: id }),
     setQuery: (query) => set({ query }),
@@ -567,6 +672,328 @@ export const useAppStore = create<AppState>((set, get) => {
           // the contact commands are being wired up.
         });
     },
+
+    setCall: (update) =>
+      set((state) => {
+        const current = state.callState;
+
+        switch (update.type) {
+          case "ringing": {
+            const info = update.payload;
+            return {
+              callState: {
+                callId: info.callId,
+                chatId: info.chatId,
+                info,
+                state: "ringing-in",
+                muted: false,
+                direction: "incoming",
+                startedAt: info.timestamp,
+              } satisfies CallSession,
+            };
+          }
+
+          case "phase": {
+            const { callId, state: phase, reason } = update.payload;
+            // Ignore phases once the overlay has moved on.
+            if (current.state === "idle") return state;
+            if (current.callId && current.callId !== callId) return state;
+
+            switch (phase) {
+              case "calling":
+                return {
+                  callState: {
+                    ...current,
+                    callId,
+                    state: "ringing-out",
+                    direction: current.direction ?? "outgoing",
+                    reason: undefined,
+                  },
+                };
+              case "connecting":
+                return {
+                  callState: { ...current, callId, state: "connecting" },
+                };
+              case "active":
+                return {
+                  callState: {
+                    ...current,
+                    callId,
+                    state: "active",
+                    activeSince: Math.floor(Date.now() / 1000),
+                    reason: undefined,
+                  },
+                };
+              case "failed": {
+                const session: CallSession = {
+                  ...current,
+                  callId,
+                  state: "ended",
+                  reason: reason ?? "Call failed",
+                };
+                return {
+                  callState: session,
+                  callHistory: appendHistory(
+                    state.callHistory,
+                    sessionHistoryEntry(session, false),
+                  ),
+                };
+              }
+              case "ended": {
+                const session: CallSession = { ...current, callId, state: "ended" };
+                return {
+                  callState: session,
+                  callHistory: appendHistory(
+                    state.callHistory,
+                    sessionHistoryEntry(session, false),
+                  ),
+                };
+              }
+              default:
+                return state;
+            }
+          }
+
+          case "missed": {
+            const info = update.payload;
+            const session: CallSession = {
+              callId: info.callId,
+              chatId: info.chatId,
+              info,
+              state: "ended",
+              muted: false,
+              direction: "incoming",
+              startedAt: info.timestamp,
+              reason: "Missed call",
+            };
+            return {
+              callState: session,
+              callHistory: appendHistory(
+                state.callHistory,
+                sessionHistoryEntry(session, true),
+              ),
+            };
+          }
+
+          case "endedElsewhere": {
+            const { callId, chatId, accepted, timestamp } = update.payload;
+            const session: CallSession = {
+              ...current,
+              callId,
+              chatId: current.chatId ?? chatId,
+              state: "ended",
+              direction: current.direction ?? "incoming",
+              startedAt: current.startedAt ?? timestamp,
+              reason: accepted
+                ? "Answered on another device"
+                : "Declined on another device",
+            };
+            return {
+              callState: session,
+              callHistory: appendHistory(
+                state.callHistory,
+                sessionHistoryEntry(session, !accepted),
+              ),
+            };
+          }
+
+          case "ended": {
+            const { callId } = update.payload;
+            if (current.state === "idle") return state;
+            if (current.callId && current.callId !== callId) return state;
+            const session: CallSession = { ...current, callId, state: "ended" };
+            return {
+              callState: session,
+              callHistory: appendHistory(
+                state.callHistory,
+                sessionHistoryEntry(session, false),
+              ),
+            };
+          }
+        }
+      }),
+
+    clearCall: (callId) =>
+      set((state) => {
+        if (callId && state.callState.callId && state.callState.callId !== callId) {
+          return state;
+        }
+        return { callState: IDLE_CALL };
+      }),
+
+    setCallMuted: (muted) => {
+      const session = get().callState;
+      if (!session.chatId) return;
+      const { chatId, callId } = session;
+
+      set({ callState: { ...session, muted } });
+
+      if (!isTauri()) return;
+      void invokeCore("calls_mute", { chatId, muted }).catch((error) => {
+        console.error("calls_mute failed", error);
+        set((state) => {
+          // Only revert when the same call is still on screen.
+          if (
+            state.callState.chatId !== chatId ||
+            state.callState.callId !== callId
+          ) {
+            return state;
+          }
+          return {
+            callState: {
+              ...state.callState,
+              muted: !muted,
+              reason: callErrorMessage(error),
+            },
+          };
+        });
+      });
+    },
+
+    startCall: (chatId, video) => {
+      const session = get().callState;
+      if (session.state !== "idle" && session.state !== "ended") return;
+
+      const now = Math.floor(Date.now() / 1000);
+      const info: CallInfo = { chatId, video, timestamp: now };
+      set({
+        callState: {
+          chatId,
+          info,
+          state: "ringing-out",
+          muted: false,
+          direction: "outgoing",
+          startedAt: now,
+        },
+      });
+
+      if (!isTauri()) {
+        // Browser mock mode: exercise the overlay with the same friendly
+        // failure a build without the media backend reports.
+        set((state) => ({
+          callState: {
+            ...state.callState,
+            state: "ended",
+            reason: CALLS_UNAVAILABLE,
+          },
+        }));
+        return;
+      }
+
+      void invokeCore("calls_start", { chatId, video }).catch((error) => {
+        console.error("calls_start failed", error);
+        set((state) => {
+          if (
+            state.callState.chatId !== chatId ||
+            state.callState.direction !== "outgoing"
+          ) {
+            return state;
+          }
+          return {
+            callState: {
+              ...state.callState,
+              state: "ended",
+              reason: callErrorMessage(error),
+            },
+          };
+        });
+      });
+    },
+
+    endCall: (chatId) => {
+      const session = get().callState;
+      if (session.chatId !== chatId) return;
+
+      if (!isTauri()) {
+        get().clearCall();
+        return;
+      }
+
+      void invokeCore("calls_end", { chatId }).catch((error) => {
+        console.error("calls_end failed", error);
+        set((state) => {
+          if (state.callState.chatId !== chatId) return state;
+          return {
+            callState: {
+              ...state.callState,
+              state: "ended",
+              reason: callErrorMessage(error),
+            },
+          };
+        });
+      });
+    },
+
+    answerCall: (callId) => {
+      const session = get().callState;
+      if (session.state !== "ringing-in" || session.callId !== callId) return;
+
+      set({ callState: { ...session, state: "connecting" } });
+
+      if (!isTauri()) {
+        set((state) => ({
+          callState: {
+            ...state.callState,
+            state: "ended",
+            reason: CALLS_UNAVAILABLE,
+          },
+        }));
+        return;
+      }
+
+      void invokeCore("calls_answer", { callId }).catch((error) => {
+        console.error("calls_answer failed", error);
+        set((state) => {
+          if (state.callState.callId !== callId) return state;
+          return {
+            callState: {
+              ...state.callState,
+              state: "ended",
+              reason: callErrorMessage(error),
+            },
+          };
+        });
+      });
+    },
+
+    rejectCall: (callId) => {
+      const session = get().callState;
+      if (session.callId !== callId) return;
+
+      /** Declining leaves a red "missed" row, matching WhatsApp. */
+      const dismiss = () =>
+        set((state) => {
+          if (state.callState.callId !== callId) return state;
+          return {
+            callHistory: appendHistory(
+              state.callHistory,
+              sessionHistoryEntry(state.callState, true),
+            ),
+            callState: IDLE_CALL,
+          };
+        });
+
+      if (!isTauri()) {
+        dismiss();
+        return;
+      }
+
+      void invokeCore("calls_reject", { callId })
+        .then(dismiss)
+        .catch((error) => {
+          console.error("calls_reject failed", error);
+          set((state) => {
+            if (state.callState.callId !== callId) return state;
+            return {
+              callState: {
+                ...state.callState,
+                state: "ended",
+                reason: callErrorMessage(error),
+              },
+            };
+          });
+        });
+    },
   };
 });
 
@@ -600,6 +1027,56 @@ function mockMediaInfo(messageId: string, kind: MessageKind): MediaInfo | null {
     fileName: `${kind}-preview.svg`,
     size: svg.length,
   };
+}
+
+/** Normalize an IPC failure (a Tauri error string or an Error) for the UI. */
+function callErrorMessage(error: unknown): string {
+  const raw =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes("not compiled") ||
+    lower.includes("not connected") ||
+    lower.includes("media backend") ||
+    lower.includes("voip")
+  ) {
+    return CALLS_UNAVAILABLE;
+  }
+  return raw || CALLS_UNAVAILABLE;
+}
+
+/** History row for a session that just terminated. */
+function sessionHistoryEntry(
+  session: CallSession,
+  missed: boolean,
+): CallHistoryEntry | null {
+  if (!session.chatId) return null;
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    id: session.callId ?? `local-${Date.now()}`,
+    chatId: session.chatId,
+    direction: missed ? "missed" : (session.direction ?? "outgoing"),
+    video: session.info?.video ?? false,
+    startedAt: session.startedAt ?? now,
+    durationSecs:
+      session.activeSince !== undefined
+        ? Math.max(0, now - session.activeSince)
+        : null,
+  };
+}
+
+/** Prepend `entry` unless the same call is already in the list. */
+function appendHistory(
+  history: CallHistoryEntry[],
+  entry: CallHistoryEntry | null,
+): CallHistoryEntry[] {
+  if (!entry) return history;
+  if (history.some((item) => item.id === entry.id)) return history;
+  return [entry, ...history];
 }
 
 /** Chats after applying the search query and the active filter. */

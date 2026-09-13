@@ -33,7 +33,7 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url = "2"
-whatsapp-core = { path = "../../../crates/whatsapp-core" }
+whatsapp-core = { path = "../../../crates/whatsapp-core", features = ["calls"] }
 
 [lints]
 workspace = true

@@ -3,8 +3,22 @@
 import { useCallback, useEffect, useRef } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invokeCore, isTauri, listenCore } from "./ipc";
-import type { ChatSummary } from "./types";
-import { useAppStore } from "../store/app";
+import type { ChatSummary, CoreEvent } from "./types";
+import { useAppStore, type CallUpdate } from "../store/app";
+
+/** How long an ended/missed card stays up before the overlay is dismissed. */
+const CALL_CLEAR_DELAY_MS = 2000;
+
+/**
+ * The core's `call` event is feature-gated on the Rust side (`calls` cargo
+ * feature), so it is not yet part of the static [`CoreEvent`] union. Its shape
+ * mirrors `CoreEvent::Call(CallUpdate)` serialized by serde:
+ * `{ type: "call", payload: <CallUpdate> }`.
+ */
+interface CallCoreEvent {
+  type: "call";
+  payload: CallUpdate;
+}
 
 export function useCoreBridge(): void {
   const appendMessage = useAppStore((state) => state.appendMessage);
@@ -15,7 +29,10 @@ export function useCoreBridge(): void {
   const markPaired = useAppStore((state) => state.markPaired);
   const setChats = useAppStore((state) => state.setChats);
   const setMessageStatus = useAppStore((state) => state.setMessageStatus);
+  const setCall = useAppStore((state) => state.setCall);
+  const clearCall = useAppStore((state) => state.clearCall);
   const hydrateTimer = useRef<number | null>(null);
+  const callClearTimer = useRef<number | null>(null);
 
   const hydrateChats = useCallback(async () => {
     if (!isTauri()) return;
@@ -67,10 +84,13 @@ export function useCoreBridge(): void {
       });
 
     listenCore((event) => {
-      switch (event.type) {
+      // Asserted to the wider union: the `call` variant is feature-gated on
+      // the Rust side and not in the static `CoreEvent` union yet.
+      const coreEvent = event as CoreEvent | CallCoreEvent;
+      switch (coreEvent.type) {
         case "connection":
-          setConnection(event.payload.state);
-          if (event.payload.state === "connected") {
+          setConnection(coreEvent.payload.state);
+          if (coreEvent.payload.state === "connected") {
             // Reconnects (existing session) also imply a usable client.
             markPaired();
             void hydrateChats();
@@ -78,7 +98,7 @@ export function useCoreBridge(): void {
           break;
 
         case "pairing": {
-          const payload = event.payload;
+          const payload = coreEvent.payload;
           switch (payload.kind) {
             case "qrCode":
               setQrCode(payload.code, payload.timeoutSecs);
@@ -103,14 +123,17 @@ export function useCoreBridge(): void {
         case "typing":
           useAppStore
             .getState()
-            .setChatTyping(event.payload.chatId, event.payload.isTyping);
+            .setChatTyping(
+              coreEvent.payload.chatId,
+              coreEvent.payload.isTyping,
+            );
           break;
 
         case "messageStatusChanged":
           setMessageStatus(
-            event.payload.chatId,
-            event.payload.messageId,
-            event.payload.status,
+            coreEvent.payload.chatId,
+            coreEvent.payload.messageId,
+            coreEvent.payload.status,
           );
           break;
 
@@ -125,7 +148,7 @@ export function useCoreBridge(): void {
           break;
 
         case "message": {
-          const message = event.payload;
+          const message = coreEvent.payload;
           appendMessage(message);
 
           // Native notification for incoming messages while the window is
@@ -150,6 +173,32 @@ export function useCoreBridge(): void {
           break;
         }
 
+        case "call": {
+          const update = coreEvent.payload;
+
+          // `setCall` also records the history row synchronously, so a
+          // terminal update can be cleared without losing the entry.
+          setCall(update);
+
+          if (callClearTimer.current !== null) {
+            window.clearTimeout(callClearTimer.current);
+            callClearTimer.current = null;
+          }
+
+          if (
+            update.type === "ended" ||
+            update.type === "missed" ||
+            update.type === "endedElsewhere"
+          ) {
+            const { callId } = update.payload;
+            callClearTimer.current = window.setTimeout(() => {
+              callClearTimer.current = null;
+              clearCall(callId);
+            }, CALL_CLEAR_DELAY_MS);
+          }
+          break;
+        }
+
         // The remaining event types are wired up as their milestones land.
         default:
           break;
@@ -170,6 +219,10 @@ export function useCoreBridge(): void {
         window.clearTimeout(hydrateTimer.current);
         hydrateTimer.current = null;
       }
+      if (callClearTimer.current !== null) {
+        window.clearTimeout(callClearTimer.current);
+        callClearTimer.current = null;
+      }
     };
   }, [
     appendMessage,
@@ -179,6 +232,8 @@ export function useCoreBridge(): void {
     setPairCode,
     markPaired,
     setMessageStatus,
+    setCall,
+    clearCall,
     hydrateChats,
   ]);
 }
