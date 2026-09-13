@@ -18,7 +18,7 @@ use crate::error::{CoreError, Result};
 use crate::types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};
 
 /// Current schema version. Bump together with `migrations()`.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Thread-safe handle to the application database.
 pub struct Store {
@@ -76,6 +76,31 @@ impl Store {
                 .execute_batch(include_str!("schema/002_media.sql"))
                 .map_err(storage_error)?;
         }
+
+        if version < 3 {
+            connection
+                .execute_batch(include_str!("schema/003_reactions.sql"))
+                .map_err(storage_error)?;
+        }
+
+        // Self-heal activity timestamps that older builds let history sync
+        // regress. The chat list must sort by the newest message, so this
+        // runs on every open and is cheap (idx_messages_chat_ts covers it).
+        connection
+            .execute(
+                "UPDATE chats
+                 SET last_activity_ts = (
+                     SELECT MAX(timestamp) FROM messages
+                     WHERE messages.chat_id = chats.id
+                 )
+                 WHERE EXISTS (
+                     SELECT 1 FROM messages
+                     WHERE messages.chat_id = chats.id
+                       AND messages.timestamp > chats.last_activity_ts
+                 )",
+                [],
+            )
+            .map_err(storage_error)?;
 
         if version < SCHEMA_VERSION {
             connection
@@ -298,7 +323,16 @@ impl Store {
                 "INSERT INTO chats (
                      id, name, last_message_preview, last_activity_ts,
                      unread_count, muted, pinned, is_group, is_archived
-                 ) VALUES (?1, CASE WHEN ?2 = '' THEN ?3 ELSE ?2 END, ?4, ?5, ?6, 0, 0, ?7, 0)
+                 ) VALUES (
+                     ?1,
+                     CASE
+                         WHEN ?2 != '' THEN ?2
+                         ELSE COALESCE(
+                             (SELECT name FROM contacts WHERE id = ?1),
+                             ?3
+                         )
+                     END,
+                     ?4, ?5, ?6, 0, 0, ?7, 0)
                  ON CONFLICT(id) DO UPDATE SET
                      name = CASE
                          -- A real push name replaces empty or numeric
@@ -309,7 +343,10 @@ impl Store {
                          ELSE chats.name
                      END,
                      last_message_preview = excluded.last_message_preview,
-                     last_activity_ts = excluded.last_activity_ts,
+                     last_activity_ts = MAX(
+                         chats.last_activity_ts,
+                         excluded.last_activity_ts
+                     ),
                      unread_count = CASE
                          WHEN ?8 THEN chats.unread_count + 1
                          ELSE chats.unread_count
@@ -422,6 +459,149 @@ impl Store {
             .map_err(storage_error)?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(storage_error)
+    }
+
+    /// Insert or update a contact's names, keeping the strongest value.
+    pub fn upsert_contact(
+        &self,
+        jid: &Jid,
+        name: Option<&str>,
+        push_name: Option<&str>,
+    ) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO contacts (id, name, push_name) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET
+                     name = COALESCE(excluded.name, contacts.name),
+                     push_name = COALESCE(excluded.push_name, contacts.push_name)",
+                params![jid.as_str(), name, push_name],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    /// The stored contact name for `jid`, if any.
+    pub fn contact_name(&self, jid: &Jid) -> Result<Option<String>> {
+        let connection = self.lock()?;
+        connection
+            .query_row(
+                "SELECT COALESCE(name, push_name) FROM contacts WHERE id = ?1",
+                params![jid.as_str()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(Option::flatten)
+            .map_err(storage_error)
+    }
+
+    /// How many address-book contacts have been received.
+    pub fn contact_count(&self) -> Result<i64> {
+        let connection = self.lock()?;
+        connection
+            .query_row("SELECT COUNT(*) FROM contacts", [], |row| row.get(0))
+            .map_err(storage_error)
+    }
+
+    /// Apply an address-book name: store it as the contact name and rename any
+    /// existing chat row (address-book names are authoritative).
+    pub fn apply_contact_name(&self, jid: &Jid, name: &str) -> Result<bool> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO contacts (id, name) VALUES (?1, ?2)
+                 ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+                params![jid.as_str(), name],
+            )
+            .map_err(storage_error)?;
+        let renamed = connection
+            .execute(
+                "UPDATE chats SET name = ?2 WHERE id = ?1 AND name != ?2",
+                params![jid.as_str(), name],
+            )
+            .map_err(storage_error)?;
+        Ok(renamed > 0)
+    }
+
+    /// Add or replace a reaction; an empty emoji removes it.
+    pub fn upsert_reaction(&self, message_id: &str, reactor: &Jid, emoji: &str) -> Result<()> {
+        let connection = self.lock()?;
+        if emoji.is_empty() {
+            connection
+                .execute(
+                    "DELETE FROM reactions WHERE message_id = ?1 AND reactor = ?2",
+                    params![message_id, reactor.as_str()],
+                )
+                .map_err(storage_error)?;
+            return Ok(());
+        }
+        connection
+            .execute(
+                "INSERT INTO reactions (message_id, reactor, emoji, updated_at)
+                 VALUES (?1, ?2, ?3, unixepoch())
+                 ON CONFLICT(message_id, reactor) DO UPDATE SET
+                     emoji = excluded.emoji,
+                     updated_at = excluded.updated_at",
+                params![message_id, reactor.as_str(), emoji],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    /// Every reaction on messages in `chat_id`:
+    /// `(message_id, reactor, emoji)`.
+    pub fn reactions_for_chat(&self, chat_id: &Jid) -> Result<Vec<(String, String, String)>> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT r.message_id, r.reactor, r.emoji
+                 FROM reactions r JOIN messages m ON m.id = r.message_id
+                 WHERE m.chat_id = ?1",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![chat_id.as_str()], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(storage_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(storage_error)
+    }
+
+    /// Tombstone a message that was revoked for everyone.
+    pub fn mark_message_revoked(&self, message_id: &str) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "UPDATE messages SET text = NULL, kind = 'unsupported' WHERE id = ?1",
+                params![message_id],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    /// Replace a message's text after an edit.
+    pub fn update_message_text(&self, message_id: &str, text: &str) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "UPDATE messages
+                 SET text = ?2,
+                     kind = CASE WHEN kind = 'unsupported' THEN 'text' ELSE kind END
+                 WHERE id = ?1",
+                params![message_id, text],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    /// Delete one message row (delete-for-me).
+    pub fn delete_message(&self, message_id: &str) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute("DELETE FROM messages WHERE id = ?1", params![message_id])
+            .map_err(storage_error)?;
+        Ok(())
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {

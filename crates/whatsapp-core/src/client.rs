@@ -25,8 +25,9 @@ use whatsapp_rust::waproto::whatsapp as wa;
 
 use crate::error::{CoreError, Result};
 use crate::events::{
-    ChatUpdatedEvent, ConnectionEvent, ConnectionState, CoreEvent, ErrorEvent,
-    MessageStatusChangedEvent, PairingEvent, PresenceEvent, TypingEvent,
+    ChatUpdatedEvent, ConnectionEvent, ConnectionState, CoreEvent, ErrorEvent, MessageEditedEvent,
+    MessageRevokedEvent, MessageStatusChangedEvent, PairingEvent, PresenceEvent, ReactionEvent,
+    TypingEvent,
 };
 use crate::media::MediaStore as _;
 use crate::store::Store;
@@ -273,6 +274,7 @@ impl WaClient {
                     EventKind::Receipt,
                     EventKind::ChatPresence,
                     EventKind::Presence,
+                    EventKind::ContactUpdate,
                 ],
                 move |event, _client| {
                     let bus = bus_updates.clone();
@@ -336,6 +338,33 @@ impl WaClient {
                 }
             });
             *self.calls.lock().await = Some(manager);
+        }
+
+        // One-time backfill of the phone's address book. Contacts live in the
+        // `critical_unblock_low` app-state collection; when we have never seen
+        // a contact, request full syncs so names arrive for the chat list.
+        if matches!(self.store.contact_count(), Ok(0)) {
+            let client = bot.client();
+            let store = Arc::clone(&self.store);
+            tokio::spawn(async move {
+                // Give the freshly spawned connection a moment to settle.
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                for name in [
+                    whatsapp_rust::wacore::appstate::patch_decode::WAPatchName::CriticalUnblockLow,
+                    whatsapp_rust::wacore::appstate::patch_decode::WAPatchName::Regular,
+                ] {
+                    client
+                        .process_sync_task(whatsapp_rust::sync_task::MajorSyncTask::AppStateSync {
+                            name,
+                            full_sync: true,
+                        })
+                        .await;
+                }
+                match store.contact_count() {
+                    Ok(count) => tracing::info!(count, "address-book backfill finished"),
+                    Err(error) => tracing::warn!(%error, "contact count after backfill failed"),
+                }
+            });
         }
 
         *guard = Some(bot.spawn());
@@ -623,6 +652,19 @@ fn handle_inbound_message(
     context: &MessageContext,
 ) {
     let info = &context.info;
+
+    // Protocol chatter (key distribution, receipts, revokes, edits) and
+    // reactions carry their payloads inside a message envelope; they must not
+    // be persisted as chat messages.
+    if let Some(protocol) = context.message.protocol_message.as_option() {
+        handle_protocol_message(bus, store, info, protocol);
+        return;
+    }
+    if let Some(reaction) = context.message.reaction_message.as_option() {
+        handle_reaction(bus, store, info, reaction);
+        return;
+    }
+
     let message = Message {
         id: info.id.to_string(),
         chat_id: from_upstream_jid(&info.source.chat),
@@ -662,6 +704,94 @@ fn handle_inbound_message(
     let _ = bus.send(CoreEvent::Message(message));
 }
 
+/// Revokes and edits arrive as protocol messages; apply them to the store and
+/// tell the UI. Other protocol types (key shares, notification syncs) are
+/// intentionally ignored.
+fn handle_protocol_message(
+    bus: &broadcast::Sender<CoreEvent>,
+    store: &Store,
+    info: &whatsapp_rust::types::message::MessageInfo,
+    protocol: &wa::message::ProtocolMessage,
+) {
+    use wa::message::protocol_message::Type;
+
+    let Some(key) = protocol.key.as_option() else {
+        return;
+    };
+    let Some(message_id) = key.id.as_deref() else {
+        return;
+    };
+    let chat_id = key
+        .remote_jid
+        .as_deref()
+        .map(Jid::new)
+        .unwrap_or_else(|| from_upstream_jid(&info.source.chat));
+
+    match protocol.r#type {
+        Some(Type::REVOKE) => {
+            if let Err(error) = store.mark_message_revoked(message_id) {
+                tracing::warn!(%error, "failed to tombstone revoked message");
+            }
+            let _ = bus.send(CoreEvent::MessageRevoked(MessageRevokedEvent {
+                chat_id,
+                message_id: message_id.to_owned(),
+            }));
+        }
+        Some(Type::MESSAGE_EDIT) => {
+            let text = protocol
+                .edited_message
+                .as_option()
+                .and_then(|edited| edited.text_content())
+                .map(str::to_owned);
+            let Some(text) = text else {
+                return;
+            };
+            if let Err(error) = store.update_message_text(message_id, &text) {
+                tracing::warn!(%error, "failed to store edited message");
+            }
+            let _ = bus.send(CoreEvent::MessageEdited(MessageEditedEvent {
+                chat_id,
+                message_id: message_id.to_owned(),
+                text,
+            }));
+        }
+        _ => {}
+    }
+}
+
+/// Reactions ride on their own envelope; persist the (message, reactor, emoji)
+/// triple and let the UI update the bubble.
+fn handle_reaction(
+    bus: &broadcast::Sender<CoreEvent>,
+    store: &Store,
+    info: &whatsapp_rust::types::message::MessageInfo,
+    reaction: &wa::message::ReactionMessage,
+) {
+    let Some(key) = reaction.key.as_option() else {
+        return;
+    };
+    let Some(message_id) = key.id.as_deref() else {
+        return;
+    };
+    let chat_id = key
+        .remote_jid
+        .as_deref()
+        .map(Jid::new)
+        .unwrap_or_else(|| from_upstream_jid(&info.source.chat));
+    let reactor = from_upstream_jid(&info.source.sender);
+    let emoji = reaction.text.as_deref().unwrap_or("");
+
+    if let Err(error) = store.upsert_reaction(message_id, &reactor, emoji) {
+        tracing::warn!(%error, "failed to store reaction");
+    }
+    let _ = bus.send(CoreEvent::Reaction(ReactionEvent {
+        chat_id,
+        message_id: message_id.to_owned(),
+        reactor,
+        emoji: emoji.to_owned(),
+    }));
+}
+
 /// Receipts, typing and presence: publish and, for receipts, persist.
 fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event: &Event) {
     match event {
@@ -695,6 +825,43 @@ fn handle_update_event(bus: &broadcast::Sender<CoreEvent>, store: &Store, event:
                 online: !presence.unavailable,
                 last_seen_ts: presence.last_seen.map(|value| value.timestamp() as u64),
             }));
+        }
+        Event::ContactUpdate(update) => {
+            let action = &update.action;
+            let name = action
+                .full_name
+                .as_deref()
+                .or(action.first_name.as_deref())
+                .map(str::trim)
+                .filter(|name| !name.is_empty());
+            let Some(name) = name else {
+                return;
+            };
+
+            // The action usually carries the PN and/or LID the name belongs
+            // to; apply it to every identity we learn about.
+            let mut targets: Vec<Jid> = vec![from_upstream_jid(&update.jid)];
+            for candidate in [action.lid_jid.as_deref(), action.pn_jid.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                let jid = Jid::new(candidate);
+                if !targets.contains(&jid) {
+                    targets.push(jid);
+                }
+            }
+
+            for jid in targets {
+                match store.apply_contact_name(&jid, name) {
+                    Ok(true) => {
+                        let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id: jid }));
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, contact = %jid, "failed to store contact name");
+                    }
+                }
+            }
         }
         _ => {}
     }

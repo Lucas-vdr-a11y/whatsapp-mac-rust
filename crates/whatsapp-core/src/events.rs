@@ -29,9 +29,51 @@ pub enum CoreEvent {
     Presence(PresenceEvent),
     /// A fatal or recoverable error worth surfacing to the user.
     Error(ErrorEvent),
+    /// A reaction was added to or removed from a message.
+    Reaction(ReactionEvent),
+    /// A message was deleted for everyone by its sender.
+    MessageRevoked(MessageRevokedEvent),
+    /// A message was edited by its sender.
+    MessageEdited(MessageEditedEvent),
     /// A call lifecycle update (ringing, phase changes, ended, missed).
     #[cfg(feature = "calls")]
     Call(CallUpdate),
+}
+
+/// A reaction change on one message. An empty `emoji` removes the reaction.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReactionEvent {
+    /// Chat containing the message.
+    pub chat_id: Jid,
+    /// The message that was reacted to.
+    pub message_id: String,
+    /// Who reacted.
+    pub reactor: Jid,
+    /// The emoji, or empty when the reaction was removed.
+    pub emoji: String,
+}
+
+/// A message that was deleted for everyone.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageRevokedEvent {
+    /// Chat containing the message.
+    pub chat_id: Jid,
+    /// The revoked message.
+    pub message_id: String,
+}
+
+/// A message whose text changed.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageEditedEvent {
+    /// Chat containing the message.
+    pub chat_id: Jid,
+    /// The edited message.
+    pub message_id: String,
+    /// The new text.
+    pub text: String,
 }
 
 /// Connection lifecycle states.
