@@ -11,6 +11,7 @@ mod commands_call_log;
 mod commands_calls;
 mod commands_channels;
 mod commands_chat_ops;
+mod commands_communities;
 mod commands_contacts;
 mod commands_groups;
 mod commands_media;
@@ -271,6 +272,13 @@ pub fn run() {
             commands_groups::groups_remove,
             commands_groups::groups_leave,
             commands_groups::groups_invite_link,
+            commands_communities::communities_create,
+            commands_communities::communities_info,
+            commands_communities::communities_link_group,
+            commands_communities::communities_unlink_group,
+            commands_communities::communities_invite_link,
+            commands_communities::communities_join,
+            commands_communities::communities_deactivate,
             commands_channels::channels_follow,
             commands_channels::channels_unfollow,
             commands_channels::channels_send,
