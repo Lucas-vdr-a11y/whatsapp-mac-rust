@@ -157,6 +157,24 @@ impl WaClient {
 
         std::fs::create_dir_all(&self.config.data_dir)
             .map_err(|error| CoreError::Storage(error.to_string()))?;
+
+        // One-time contact backfill for devices linked before the client
+        // handled `ContactUpdate`: those app-state patches were acked and are
+        // never replayed. Clearing the collection's stored version forces a
+        // full re-download exactly once.
+        let backfill_marker = self.config.data_dir.join("contacts-backfilled");
+        if matches!(self.store.contact_count(), Ok(0)) && !backfill_marker.exists() {
+            match reset_app_state_collection(&self.config.data_dir, "critical_unblock_low") {
+                Ok(()) => {
+                    let _ = std::fs::write(&backfill_marker, b"1");
+                    tracing::info!("cleared contact app-state version for a one-time backfill");
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "could not reset the contact app-state version");
+                }
+            }
+        }
+
         let session_path = self.config.data_dir.join("session.db");
         let session_path = session_path
             .to_str()
@@ -1093,6 +1111,22 @@ fn preview_for(message: &Message) -> String {
         _ => "[Message]".to_owned(),
     };
     text.chars().take(MAX).collect()
+}
+
+/// Delete the stored sync version for one app-state collection so the next
+/// sync re-downloads every patch. Used once to backfill contact names.
+fn reset_app_state_collection(data_dir: &std::path::Path, collection: &str) -> Result<()> {
+    let connection = rusqlite::Connection::open(data_dir.join("session.db"))
+        .map_err(|error| CoreError::Storage(error.to_string()))?;
+    // The table only exists after the backend has initialised once.
+    let deleted = connection
+        .execute(
+            "DELETE FROM app_state_versions WHERE name = ?1",
+            rusqlite::params![collection],
+        )
+        .map_err(|error| CoreError::Storage(error.to_string()))?;
+    tracing::info!(collection, deleted, "app-state version cleared for backfill");
+    Ok(())
 }
 
 fn to_upstream_jid(jid: &Jid) -> Result<whatsapp_rust::Jid> {

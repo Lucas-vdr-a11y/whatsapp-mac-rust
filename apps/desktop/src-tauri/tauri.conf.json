@@ -12,7 +12,9 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["rustwa"]
+        "schemes": [
+          "rustwa"
+        ]
       }
     }
   },
@@ -49,7 +51,8 @@
     "shortDescription": "Unofficial WhatsApp client for macOS, written in Rust",
     "longDescription": "RustWA is an unofficial, from-scratch WhatsApp client for macOS written in Rust. It reproduces the familiar WhatsApp layout while using a fraction of the resources of the official Catalyst app.",
     "macOS": {
-      "minimumSystemVersion": "13.0"
+      "minimumSystemVersion": "13.0",
+      "infoPlist": "Info.plist"
     }
   }
 }

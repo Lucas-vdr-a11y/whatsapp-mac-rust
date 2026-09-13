@@ -18,6 +18,12 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
+# macOS CoreAudio capture/playback for the calls media backend. Optional:
+# only the `calls` feature enables them, so the default build stays free of
+# the audio stack.
+cpal = { version = "0.18", optional = true }
+rubato = { version = "0.16", optional = true }
+
 # NOTE: upstream's default feature set includes `simd`, which enables
 # `portable_simd` and therefore requires a nightly toolchain. We build on
 # stable, so the defaults are disabled and the stable feature set is selected
@@ -32,12 +38,13 @@ whatsapp-rust = { version = "0.7.0", default-features = false, features = [
 ] }
 
 [features]
-# Opt-in VoIP calling (milestone M7). Enables the pure-Rust MLOW audio path
-# and the WebRTC/DTLS/SCTP relay runtime. Off by default: the default build
-# must stay free of the native/native-ish media stack. See
-# `docs/research/calls-plan.md` for the full integration plan and the
-# `client.rs`/`events.rs` wiring that `calls::CallManager` still needs.
-calls = ["whatsapp-rust/voip-mlow"]
+# Opt-in VoIP calling (milestone M7). Enables the pure-Rust MLOW audio path,
+# the WebRTC/DTLS/SCTP relay runtime, and the cpal/rubato macOS media backend
+# (`crate::call_media`). Off by default: the default build must stay free of
+# the native/native-ish media stack. See `docs/research/calls-plan.md` for the
+# full integration plan and the `client.rs`/`events.rs` wiring that
+# `calls::CallManager` still needs.
+calls = ["whatsapp-rust/voip-mlow", "dep:cpal", "dep:rubato"]
 # Adds the optional native libopus adapter on top of `calls` (builds a
 # vendored libopus with cmake). Useful for encoded-audio producers.
 calls-opus = ["calls", "whatsapp-rust/voip-libopus"]

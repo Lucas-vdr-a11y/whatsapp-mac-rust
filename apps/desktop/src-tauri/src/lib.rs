@@ -6,8 +6,10 @@
 
 mod app_lock;
 mod commands_actions;
+mod commands_business;
 mod commands_calls;
 mod commands_channels;
+mod commands_chat_ops;
 mod commands_contacts;
 mod commands_groups;
 mod commands_media;
@@ -241,6 +243,24 @@ pub fn run() {
             commands_privacy::privacy_get,
             commands_privacy::privacy_set,
             commands_privacy::privacy_set_disappearing_default,
+            commands_business::business_profile,
+            commands_business::labels_list,
+            commands_business::labels_add,
+            commands_business::labels_remove,
+            commands_business::catalog_fetch,
+            commands_business::username_lookup,
+            commands_chat_ops::chat_delete,
+            commands_chat_ops::chat_clear,
+            commands_chat_ops::chat_set_disappearing,
+            commands_chat_ops::chat_send_mentions,
+            commands_chat_ops::message_forward,
+            commands_chat_ops::message_pin,
+            commands_chat_ops::message_unpin,
+            commands_chat_ops::poll_create,
+            commands_chat_ops::poll_vote,
+            commands_chat_ops::event_create,
+            commands_chat_ops::list_starred,
+            commands_chat_ops::search_messages,
             commands_groups::groups_create,
             commands_groups::groups_info,
             commands_groups::groups_add,
@@ -253,6 +273,9 @@ pub fn run() {
             commands_channels::channels_post_status,
             commands_calls::calls_start,
             commands_calls::calls_end,
+            commands_calls::calls_answer,
+            commands_calls::calls_reject,
+            commands_calls::calls_mute,
             platform::notify,
             platform::notify_for_chat,
             platform::notification_permission,
@@ -277,10 +300,11 @@ pub fn run() {
                 Store::open(&data_dir.join("rustwa.db"))
                     .map_err(|error| format!("failed to open the store: {error}"))?,
             );
-            let core = Arc::new(WaClient::new(
-                ClientConfig::new(data_dir.join("session")),
-                store,
-            ));
+            let mut config = ClientConfig::new(data_dir.join("session"));
+            // Real CoreAudio capture/playback for calls; without it the manager
+            // reports `NotConnected`. Video stays rejected by the backend.
+            config.call_media = Some(Arc::new(whatsapp_core::CoreAudioFactory::new()));
+            let core = Arc::new(WaClient::new(config, store));
             app.manage(state::AppState::new(Arc::clone(&core)));
 
             // Bridge core events to the webview.
