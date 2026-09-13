@@ -988,3 +988,26 @@
     animation: none;
   }
 }
+
+/* Conversation wallpaper: an original doodle tile, theme-aware via a mask. */
+.conversation {
+  position: relative;
+}
+
+.conversation::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-color: var(--doodle);
+  -webkit-mask-image: url("../assets/doodle.svg");
+  mask-image: url("../assets/doodle.svg");
+  -webkit-mask-size: 300px 300px;
+  mask-size: 300px 300px;
+  opacity: 0.55;
+}
+
+.conversation > * {
+  position: relative;
+  z-index: 1;
+}
