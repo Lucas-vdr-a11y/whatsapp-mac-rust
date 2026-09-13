@@ -14,6 +14,7 @@ import { invokeCore, isTauri } from "../../lib/ipc";
 import { useAppStore } from "../../store/app";
 import { ScreenHeader } from "../screens/shared";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { PrivacySection } from "./PrivacySection";
 import { SettingsRow } from "./SettingsRow";
 import { Toggle } from "./Toggle";
 import {
@@ -454,6 +455,8 @@ export function SettingsScreen() {
             }
           />
         </div>
+
+        <PrivacySection />
 
         <h2 className="settings-section-title">Startup</h2>
         <div className="settings-group">

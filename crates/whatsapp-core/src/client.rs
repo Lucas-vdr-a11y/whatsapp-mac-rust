@@ -386,6 +386,48 @@ impl WaClient {
             });
         }
 
+        // Group subjects are missing from some history-sync conversations;
+        // fetch them from the server in the background, politely spaced.
+        {
+            let client = bot.client();
+            let store = Arc::clone(&self.store);
+            let bus = self.events.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                let targets = match store.chats_needing_group_names(200) {
+                    Ok(targets) => targets,
+                    Err(error) => {
+                        tracing::warn!(%error, "group name pass: listing chats failed");
+                        return;
+                    }
+                };
+                let mut resolved = 0usize;
+                for chat_id in targets {
+                    let Ok(upstream) = to_upstream_jid(&chat_id) else {
+                        continue;
+                    };
+                    match client.groups().get_metadata(&upstream).await {
+                        Ok(metadata) => {
+                            let subject = metadata.subject.trim().to_owned();
+                            if !subject.is_empty()
+                                && matches!(store.rename_chat(&chat_id, &subject), Ok(true))
+                            {
+                                resolved += 1;
+                                let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent {
+                                    chat_id: chat_id.clone(),
+                                }));
+                            }
+                        }
+                        Err(error) => {
+                            tracing::debug!(%error, chat = %chat_id, "group metadata fetch failed");
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                }
+                tracing::info!(resolved, "group name pass finished");
+            });
+        }
+
         *guard = Some(bot.spawn());
         Ok(())
     }

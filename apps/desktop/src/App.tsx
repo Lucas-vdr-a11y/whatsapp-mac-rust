@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useShallow } from "zustand/react/shallow";
 import { ChatList } from "./components/ChatList";
 import { Conversation, EmptyConversation } from "./components/Conversation";
+import { DropOverlay } from "./components/DropOverlay";
 import { NavigationRail, type RailSection } from "./components/NavigationRail";
 import { PairingScreen } from "./components/PairingScreen";
 import { CallsScreen } from "./components/screens/CallsScreen";
@@ -93,6 +94,8 @@ export default function App() {
       ) : (
         <EmptyConversation />
       )}
+
+      <DropOverlay />
     </div>
   );
 }

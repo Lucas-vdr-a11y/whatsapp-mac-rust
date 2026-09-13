@@ -29,12 +29,13 @@
         "minHeight": 560,
         "resizable": true,
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "dragDropEnabled": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost",
-      "devCsp": "default-src 'self' http://localhost:1420; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420"
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob: https:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost",
+      "devCsp": "default-src 'self' http://localhost:1420; img-src 'self' asset: http://asset.localhost data: blob: https:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420"
     }
   },
   "bundle": {
@@ -48,6 +49,63 @@
       "icons/icon.ico"
     ],
     "category": "SocialNetworking",
+    "fileAssociations": [
+      {
+        "ext": [
+          "png",
+          "jpg",
+          "jpeg",
+          "gif",
+          "webp"
+        ],
+        "name": "Image",
+        "description": "Image files",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "contentTypes": [
+          "public.image"
+        ]
+      },
+      {
+        "ext": [
+          "mp4",
+          "mov"
+        ],
+        "name": "Video",
+        "description": "Video files",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "contentTypes": [
+          "public.movie"
+        ]
+      },
+      {
+        "ext": [
+          "mp3",
+          "ogg",
+          "opus"
+        ],
+        "name": "Audio",
+        "description": "Audio files",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "contentTypes": [
+          "public.audio"
+        ]
+      },
+      {
+        "ext": [
+          "pdf"
+        ],
+        "name": "PDF document",
+        "description": "PDF documents",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "contentTypes": [
+          "com.adobe.pdf"
+        ]
+      }
+    ],
     "shortDescription": "Unofficial WhatsApp client for macOS, written in Rust",
     "longDescription": "RustWA is an unofficial, from-scratch WhatsApp client for macOS written in Rust. It reproduces the familiar WhatsApp layout while using a fraction of the resources of the official Catalyst app.",
     "macOS": {

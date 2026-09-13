@@ -5,6 +5,7 @@ import { formatDateDivider } from "../lib/time";
 import type { ChatSummary, Jid, Message } from "../lib/types";
 import { useAppStore, type MessageQuote } from "../store/app";
 import { AttachmentMenu, type AttachmentKind } from "./AttachmentMenu";
+import { PollComposer } from "./message/PollComposer";
 import { CallOverlay } from "./calls/CallOverlay";
 import { DRAFT_SAVE_DELAY_MS, readDraft, writeDraft } from "./composer/drafts";
 import { MentionMenu } from "./composer/MentionMenu";
@@ -296,6 +297,7 @@ function Composer({
   const [mentionIndex, setMentionIndex] = useState(0);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [pollOpen, setPollOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLElement>(null);
   const draftTimer = useRef<number | null>(null);
@@ -455,8 +457,11 @@ function Composer({
 
   // The actual attachment flows land with a later milestone; for now the
   // menu only reports the chosen kind and dismisses itself.
-  const handleAttach = (_kind: AttachmentKind) => {
+  const handleAttach = (kind: AttachmentKind) => {
     setAttachOpen(false);
+    if (kind === "poll") {
+      setPollOpen(true);
+    }
   };
 
   /** Recompute the active `@query` from the text and caret position. */
@@ -526,6 +531,9 @@ function Composer({
           onPick={handleAttach}
           onClose={() => setAttachOpen(false)}
         />
+      )}
+      {pollOpen && (
+        <PollComposer chatId={chatId} onClose={() => setPollOpen(false)} />
       )}
       {mentionOpen && (
         <MentionMenu

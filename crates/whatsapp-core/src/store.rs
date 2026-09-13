@@ -509,6 +509,39 @@ impl Store {
             .map_err(storage_error)
     }
 
+    /// Group chats whose name is still a numeric placeholder.
+    pub fn chats_needing_group_names(&self, limit: u32) -> Result<Vec<Jid>> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id FROM chats
+                 WHERE is_group = 1
+                   AND (name = '' OR name = substr(id, 1, instr(id, '@') - 1))
+                 ORDER BY last_activity_ts DESC
+                 LIMIT ?1",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![limit], |row| row.get::<_, String>(0))
+            .map_err(storage_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map(|ids| ids.into_iter().map(Jid::new).collect())
+            .map_err(storage_error)
+    }
+
+    /// Rename a chat (group subjects, manual renames). Returns true when the
+    /// row actually changed.
+    pub fn rename_chat(&self, jid: &Jid, name: &str) -> Result<bool> {
+        let connection = self.lock()?;
+        let changed = connection
+            .execute(
+                "UPDATE chats SET name = ?2 WHERE id = ?1 AND name != ?2",
+                params![jid.as_str(), name],
+            )
+            .map_err(storage_error)?;
+        Ok(changed > 0)
+    }
+
     /// Apply an address-book name: store it as the contact name and rename any
     /// existing chat row (address-book names are authoritative).
     pub fn apply_contact_name(&self, jid: &Jid, name: &str) -> Result<bool> {
@@ -658,6 +691,10 @@ fn row_to_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         kind: kind_from_str(row.get::<_, String>(5)?.as_str()),
         text: row.get(6)?,
         status: status_from_str(row.get::<_, String>(7)?.as_str()),
+        // The `messages` table has no view-once column yet, so the flag is
+        // only known for messages converted from a live payload. Follow-up:
+        // persist it (schema v3) or re-derive it from `raw_proto`.
+        view_once: false,
     })
 }
 

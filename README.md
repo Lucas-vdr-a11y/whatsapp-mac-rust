@@ -106,17 +106,18 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 | Milestone | Scope | Status |
 |---|---|---|
-| M0 Core connection | pairing (QR / pair code / passkey), history sync, reconnect, media pipeline | 🚧 in progress |
-| M1 Everyday messaging | text, replies, receipts, typing, presence, notifications | ⏳ |
-| M2 Chat management | archive/pin/mute/delete, starred, search, favorites | ⏳ |
-| M3 Media experience | images, video, voice, documents, stickers, view-once, disappearing | ⏳ |
-| M4 Message actions | reactions, edit, revoke, pins, forwarding, polls, events | ⏳ |
-| M5 Groups & communities | admin, invite links, join requests, communities | ⏳ |
-| M6 Status & channels | status/stories, channels/newsletters | ⏳ |
-| M7 Calls | 1:1 audio/video, screen share, call links, group calls | ⏳ |
-| M8 Privacy & security | privacy settings, app lock, chat lock, verification, proxy | ⏳ |
-| M9 System integration | Siri, Shortcuts, widgets, share sheet, menu bar, deep links | ⏳ |
-| M10 Power features | business profiles, catalog, labels, quick replies, usernames | ⏳ |
+| M0 Core connection | pairing (QR / pair code / passkey), history sync, reconnect, media pipeline | ✅ pairing, session, history, media download/upload verified live |
+| M1 Everyday messaging | text, replies, mentions, receipts, typing, presence, notifications, drafts | ✅ all except server-side draft sync |
+| M2 Chat management | archive/pin/mute/delete, starred, search, favorites | ✅ archive/pin/mute/read live; starred and message search shipped |
+| M3 Media experience | images, video, voice, documents, stickers, view-once, disappearing | 🚧 images/video/voice/documents/stickers ship; view-once and auto-download policy pending |
+| M4 Message actions | reactions, edit, revoke, pins, forwarding, polls, events | ✅ reactions/edits/revokes live in both directions; forwarding, pins, polls shipped |
+| M5 Groups & communities | admin, invite links, join requests, communities | 🚧 create/info/add/remove/leave/invite live; join requests and communities pending |
+| M6 Status & channels | status/stories, channels/newsletters | 🚧 text status posting and channel follow/post; status viewing pending |
+| M7 Calls | 1:1 audio/video, screen share, call links, group calls | 🚧 1:1 audio with CoreAudio backend and call UI; video is upstream-preview-only |
+| M8 Privacy & security | privacy settings, app lock, chat lock, verification, proxy | 🚧 privacy settings, blocking, disappearing default; app-lock preference only |
+| M9 System integration | Siri, Shortcuts, widgets, share sheet, menu bar, deep links | 🚧 menu bar, tray, deep links, launch-at-login; Siri/Shortcuts and share sheet pending |
+| M10 Power features | business profiles, catalog, labels, quick replies, usernames | 🚧 profiles/labels/catalog/username lookup in core; UI pending |
+| M11 Research | scheduled messages, live location, translation | 🔬 scheduled messages research committed; protocol gaps documented |
 | M12 Out of scope | payments, Meta AI, interop bridges, E2E backups (Meta-gated) | ❌ |
 
 The full evidence-backed plan — every feature of the official app mapped
