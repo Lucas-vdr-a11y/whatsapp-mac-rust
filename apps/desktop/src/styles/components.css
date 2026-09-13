@@ -711,3 +711,280 @@
   font-size: 12px;
   color: var(--text-muted);
 }
+
+/* ------------------------------------------------------------------ */
+/* File intake: drop overlay, chat chooser and transfer toaster         */
+/* ------------------------------------------------------------------ */
+
+/* Full-window backdrop shown while files hover. It stays non-interactive so
+   it cannot swallow the drop; the chooser opts back in with `.interactive`. */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2300;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(11, 20, 26, 0.72);
+  pointer-events: none;
+}
+
+.drop-overlay.interactive {
+  pointer-events: auto;
+}
+
+.drop-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 56px;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--bg-modal);
+  box-shadow: var(--shadow-modal);
+  text-align: center;
+}
+
+.drop-overlay-icon {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 4px;
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.drop-overlay-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.drop-overlay-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* Chat chooser shown when files are dropped with no chat selected. */
+.drop-chooser {
+  width: min(420px, 100%);
+  max-height: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-lg);
+  background: var(--bg-modal);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+.drop-chooser-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 16px 14px 22px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.drop-chooser-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.drop-chooser-subtitle {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.drop-chooser-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.drop-chooser-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  text-align: left;
+}
+
+.drop-chooser-item:hover {
+  background: var(--bg-hover);
+}
+
+.drop-chooser-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.drop-chooser-avatar {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--bg-active);
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.drop-chooser-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.drop-chooser-tag {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.drop-chooser-empty {
+  margin: 0;
+  padding: 28px 22px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+/* Transfer progress cards, bottom-right. */
+.transfer-toaster {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2400;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 320px;
+  pointer-events: none;
+}
+
+.transfer-card {
+  pointer-events: auto;
+  border-radius: var(--radius-md);
+  background: var(--bg-modal);
+  border: 1px solid var(--divider);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+.transfer-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 8px 10px 14px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.transfer-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.transfer-dismiss {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+}
+
+.transfer-dismiss:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.transfer-list {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.transfer-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.transfer-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.transfer-item-error {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--danger);
+}
+
+.transfer-icon {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.transfer-icon.sent {
+  color: var(--accent);
+}
+
+.transfer-icon.failed {
+  color: var(--danger);
+}
+
+.transfer-icon.spin {
+  animation: transfer-spin 900ms linear infinite;
+}
+
+@keyframes transfer-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transfer-icon.spin {
+    animation: none;
+  }
+}
