@@ -1,7 +1,11 @@
-//! Groups: creation, metadata, participant management, invite links.
+//! Groups: creation, metadata, participant and join-request management,
+//! invite links and group settings.
 
 use serde::Serialize;
-use whatsapp_rust::{GroupCreateOptions, GroupMetadata, GroupParticipantOptions};
+use whatsapp_rust::{
+    GroupCreateOptions, GroupDescription, GroupMetadata, GroupParticipantOptions, GroupSubject,
+    PreviousDescription,
+};
 
 use crate::client::{WaClient, from_upstream, to_upstream};
 use crate::error::{CoreError, Result};
@@ -19,6 +23,16 @@ pub struct GroupInfo {
     pub participants: Vec<Jid>,
     /// Participant count.
     pub participant_count: u32,
+}
+
+/// Public information about a pending join (membership approval) request.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JoinRequest {
+    /// Requesting user's JID.
+    pub id: Jid,
+    /// Unix seconds when the request was created, when the server reports it.
+    pub requested_at: Option<u64>,
 }
 
 impl WaClient {
@@ -104,12 +118,118 @@ impl WaClient {
 
     /// Fetch the group's current invite link without resetting it.
     pub async fn invite_link(&self, chat_id: &Jid) -> Result<String> {
+        self.group_invite_link(chat_id, false).await
+    }
+
+    /// Reset the group's invite link, invalidating the previous one, and
+    /// return the new link.
+    pub async fn reset_invite_link(&self, chat_id: &Jid) -> Result<String> {
+        self.group_invite_link(chat_id, true).await
+    }
+
+    /// Set the group subject.
+    pub async fn set_group_subject(&self, chat_id: &Jid, subject: &str) -> Result<()> {
+        let subject = subject.trim();
+        if subject.is_empty() {
+            return Err(CoreError::InvalidInput("group subject is empty".into()));
+        }
+        let subject = GroupSubject::new(subject)
+            .map_err(|error| CoreError::InvalidInput(error.to_string()))?;
+
         let client = self.client().await?;
         let jid = to_upstream(chat_id)?;
 
         client
             .groups()
-            .get_invite_link(&jid, false)
+            .set_subject(&jid, subject)
+            .await
+            .map_err(|error| CoreError::Protocol(error.to_string()))?;
+        Ok(())
+    }
+
+    /// Set the group description; an empty `text` deletes the current one.
+    ///
+    /// The upstream replaces the description optimistically: it resolves the
+    /// current description id first, so a concurrent update surfaces as a
+    /// protocol error instead of silently overwriting it.
+    pub async fn set_group_description(&self, chat_id: &Jid, text: &str) -> Result<()> {
+        let text = text.trim();
+        let description = if text.is_empty() {
+            None
+        } else {
+            Some(
+                GroupDescription::new(text)
+                    .map_err(|error| CoreError::InvalidInput(error.to_string()))?,
+            )
+        };
+
+        let client = self.client().await?;
+        let jid = to_upstream(chat_id)?;
+
+        client
+            .groups()
+            .set_description(&jid, description, PreviousDescription::Resolve)
+            .await
+            .map_err(|error| CoreError::Protocol(error.to_string()))?;
+        Ok(())
+    }
+
+    /// List the group's pending join (membership approval) requests.
+    pub async fn pending_participants(&self, chat_id: &Jid) -> Result<Vec<JoinRequest>> {
+        let client = self.client().await?;
+        let jid = to_upstream(chat_id)?;
+
+        let requests = client
+            .groups()
+            .get_membership_requests(&jid)
+            .await
+            .map_err(|error| CoreError::Protocol(error.to_string()))?;
+
+        Ok(requests
+            .into_iter()
+            .map(|request| JoinRequest {
+                id: from_upstream(&request.jid),
+                requested_at: request.request_time,
+            })
+            .collect())
+    }
+
+    /// Approve pending join requests, adding the requesters to the group.
+    pub async fn approve_participants(&self, chat_id: &Jid, participants: &[Jid]) -> Result<()> {
+        let client = self.client().await?;
+        let jid = to_upstream(chat_id)?;
+        let upstream = upstream_jids(participants)?;
+
+        client
+            .groups()
+            .approve_membership_requests(&jid, &upstream)
+            .await
+            .map_err(|error| CoreError::Protocol(error.to_string()))?;
+        Ok(())
+    }
+
+    /// Reject pending join requests.
+    pub async fn reject_participants(&self, chat_id: &Jid, participants: &[Jid]) -> Result<()> {
+        let client = self.client().await?;
+        let jid = to_upstream(chat_id)?;
+        let upstream = upstream_jids(participants)?;
+
+        client
+            .groups()
+            .reject_membership_requests(&jid, &upstream)
+            .await
+            .map_err(|error| CoreError::Protocol(error.to_string()))?;
+        Ok(())
+    }
+
+    /// Shared invite-link fetch; `reset` invalidates the previous link.
+    async fn group_invite_link(&self, chat_id: &Jid, reset: bool) -> Result<String> {
+        let client = self.client().await?;
+        let jid = to_upstream(chat_id)?;
+
+        client
+            .groups()
+            .get_invite_link(&jid, reset)
             .await
             .map_err(|error| CoreError::Protocol(error.to_string()))
     }

@@ -12,7 +12,7 @@ import { t } from "../../lib/i18n";
 import { invokeCore, isTauri } from "../../lib/ipc";
 import type { ChatSummary, Jid } from "../../lib/types";
 import { useAppStore } from "../../store/app";
-import type { Contact, GroupInfo } from "./types";
+import type { Contact, GroupInfo, JoinRequest } from "./types";
 
 /** Demo address book used in browser mock mode. */
 export const DEMO_CONTACTS: Contact[] = [
@@ -155,6 +155,13 @@ export async function createGroup(
   return invokeCore<Jid>("groups_create", { subject, participants });
 }
 
+/** Deterministic demo participant set for a mock group. */
+function demoParticipants(chatId: Jid): Jid[] {
+  return DEMO_CONTACTS.filter((contact) => contact.id !== chatId)
+    .slice(0, 3 + (hashString(chatId) % 4))
+    .map((contact) => contact.id);
+}
+
 /** Fetches metadata for one group. */
 export async function fetchGroupInfo(chatId: Jid): Promise<GroupInfo> {
   if (isTauri()) {
@@ -162,11 +169,7 @@ export async function fetchGroupInfo(chatId: Jid): Promise<GroupInfo> {
   }
 
   await delay(MOCK_LATENCY_MS);
-  const participants = DEMO_CONTACTS.filter(
-    (contact) => contact.id !== chatId,
-  )
-    .slice(0, 3 + (hashString(chatId) % 4))
-    .map((contact) => contact.id);
+  const participants = demoParticipants(chatId);
   const chat = useAppStore
     .getState()
     .chats.find((candidate) => candidate.id === chatId);
@@ -216,4 +219,75 @@ export async function fetchInviteLink(chatId: Jid): Promise<string> {
     return `https://chat.whatsapp.com/${token}DEMO`;
   }
   return invokeCore<string>("groups_invite_link", { chatId });
+}
+
+/** Resets the invite link (invalidating the previous one) and returns it. */
+export async function resetInviteLink(chatId: Jid): Promise<string> {
+  if (!isTauri()) {
+    await delay(MOCK_LATENCY_MS);
+    const token = hashString(`${chatId}:${Date.now()}`)
+      .toString(36)
+      .toUpperCase();
+    return `https://chat.whatsapp.com/${token}DEMO`;
+  }
+  return invokeCore<string>("groups_reset_invite_link", { chatId });
+}
+
+/** Renames the group. */
+export async function setGroupSubject(
+  chatId: Jid,
+  subject: string,
+): Promise<void> {
+  if (!isTauri()) {
+    await delay(MOCK_LATENCY_MS);
+    return;
+  }
+  await invokeCore<void>("groups_set_subject", { chatId, subject });
+}
+
+/** Lists pending join requests; errors on groups that do not approve joins. */
+export async function fetchJoinRequests(chatId: Jid): Promise<JoinRequest[]> {
+  if (isTauri()) {
+    return invokeCore<JoinRequest[]>("groups_pending_participants", { chatId });
+  }
+
+  await delay(MOCK_LATENCY_MS);
+  const participants = new Set(demoParticipants(chatId));
+  const now = Math.floor(Date.now() / 1000);
+  return DEMO_CONTACTS.filter((contact) => !participants.has(contact.id))
+    .slice(0, 2)
+    .map((contact, index) => ({
+      id: contact.id,
+      requestedAt: now - (index + 1) * 3600,
+    }));
+}
+
+/** Approves pending join requests; the requesters become members. */
+export async function approveJoinRequests(
+  chatId: Jid,
+  participants: Jid[],
+): Promise<void> {
+  if (!isTauri()) {
+    await delay(MOCK_LATENCY_MS);
+    return;
+  }
+  await invokeCore<void>("groups_approve_participants", {
+    chatId,
+    participants,
+  });
+}
+
+/** Rejects pending join requests. */
+export async function rejectJoinRequests(
+  chatId: Jid,
+  participants: Jid[],
+): Promise<void> {
+  if (!isTauri()) {
+    await delay(MOCK_LATENCY_MS);
+    return;
+  }
+  await invokeCore<void>("groups_reject_participants", {
+    chatId,
+    participants,
+  });
 }

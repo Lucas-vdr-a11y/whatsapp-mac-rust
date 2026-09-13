@@ -6,7 +6,7 @@ use whatsapp_rust::{NewsletterRole, StatusSendOptions};
 
 use crate::client::{WaClient, from_upstream, to_upstream};
 use crate::error::{CoreError, Result};
-use crate::types::{ChatSummary, Jid};
+use crate::types::{ChatSummary, Jid, Message};
 
 impl WaClient {
     /// Follow a channel from its invite link.
@@ -58,8 +58,9 @@ impl WaClient {
     /// role is checked first and a non-admin post fails with
     /// [`CoreError::Protocol`]. The post itself goes out as a plaintext SMAX
     /// stanza (channels are not end-to-end encrypted) and is recorded in the
-    /// local store like any other message.
-    pub async fn send_channel_message(&self, chat_id: &Jid, text: &str) -> Result<()> {
+    /// local store like any other message. Returns the stored message so the
+    /// UI can reconcile its optimistic echo.
+    pub async fn send_channel_message(&self, chat_id: &Jid, text: &str) -> Result<Message> {
         let jid = to_upstream(chat_id)?;
         if !jid.is_newsletter() {
             return Err(CoreError::InvalidInput(format!(
@@ -86,8 +87,8 @@ impl WaClient {
         }
 
         // `send_text` detects the newsletter JID and uses the upstream
-        // plaintext path; it also stores and publishes the local echo.
-        self.send_text(chat_id, text).await.map(|_| ())
+        // plaintext path; it also stores, echoes and returns the message.
+        self.send_text(chat_id, text).await
     }
 
     /// Post a plain-text status update.

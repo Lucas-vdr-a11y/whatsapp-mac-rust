@@ -12,9 +12,13 @@ import {
   Link2,
   LoaderCircle,
   LogOut,
+  Pencil,
+  RefreshCw,
   Search,
+  UserCheck,
   UserMinus,
   UserPlus,
+  UserX,
   X,
 } from "lucide-react";
 import { initials } from "../../lib/names";
@@ -25,15 +29,20 @@ import { ContactList, jidLabel } from "./ContactList";
 import { ConfirmDialog } from "./ConfirmDialog";
 import {
   addParticipants,
+  approveJoinRequests,
   copyToClipboard,
   fetchGroupInfo,
   fetchInviteLink,
+  fetchJoinRequests,
   friendlyError,
   leaveGroup,
+  rejectJoinRequests,
   removeParticipants,
+  resetInviteLink,
+  setGroupSubject,
   useContacts,
 } from "./api";
-import type { Contact, GroupInfo } from "./types";
+import type { Contact, GroupInfo, JoinRequest } from "./types";
 
 interface GroupInfoPanelProps {
   chatId: string;
@@ -41,6 +50,7 @@ interface GroupInfoPanelProps {
 }
 
 type InviteState = "idle" | "loading" | "copied";
+type ResetState = "idle" | "loading" | "done";
 
 export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
   const { t } = useTranslation();
@@ -50,6 +60,15 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
   const [reloadToken, setReloadToken] = useState(0);
 
   const [inviteState, setInviteState] = useState<InviteState>("idle");
+  const [resetState, setResetState] = useState<ResetState>("idle");
+  const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
+  const [requestBusy, setRequestBusy] = useState<{
+    jid: string;
+    action: "approve" | "reject";
+  } | null>(null);
+  const [subjectEditing, setSubjectEditing] = useState(false);
+  const [subjectDraft, setSubjectDraft] = useState("");
+  const [subjectSaving, setSubjectSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addQuery, setAddQuery] = useState("");
@@ -59,6 +78,7 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const copiedTimer = useRef<number | null>(null);
+  const resetTimer = useRef<number | null>(null);
 
   const {
     contacts,
@@ -87,11 +107,34 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
     };
   }, [chatId, reloadToken]);
 
-  // Clear the "Copied" timer if the panel unmounts mid-confirmation.
+  // Join requests load separately: groups without membership approval (or
+  // where this account is not an admin) simply have none, and a failure here
+  // must not block the rest of the panel.
+  useEffect(() => {
+    let cancelled = false;
+    setJoinRequests([]);
+    setSubjectEditing(false);
+    setResetState("idle");
+    void fetchJoinRequests(chatId)
+      .then((requests) => {
+        if (!cancelled) setJoinRequests(requests);
+      })
+      .catch(() => {
+        // Keep the section hidden; group info still renders.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [chatId, reloadToken]);
+
+  // Clear the confirmation timers if the panel unmounts mid-feedback.
   useEffect(
     () => () => {
       if (copiedTimer.current !== null) {
         window.clearTimeout(copiedTimer.current);
+      }
+      if (resetTimer.current !== null) {
+        window.clearTimeout(resetTimer.current);
       }
     },
     [],
@@ -141,6 +184,104 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
     } catch (cause) {
       setInviteState("idle");
       setActionError(friendlyError(cause, t("groups.inviteError")));
+    }
+  };
+
+  const handleReset = async () => {
+    if (resetState === "loading") return;
+    setResetState("loading");
+    setActionError(null);
+    try {
+      const link = await resetInviteLink(chatId);
+      await copyToClipboard(link);
+      setResetState("done");
+      if (resetTimer.current !== null) {
+        window.clearTimeout(resetTimer.current);
+      }
+      resetTimer.current = window.setTimeout(() => {
+        resetTimer.current = null;
+        setResetState("idle");
+      }, 2000);
+    } catch (cause) {
+      setResetState("idle");
+      setActionError(friendlyError(cause, t("groups.resetInviteError")));
+    }
+  };
+
+  const startSubjectEdit = () => {
+    if (!info) return;
+    setSubjectDraft(info.subject);
+    setSubjectEditing(true);
+    setActionError(null);
+  };
+
+  const cancelSubjectEdit = () => {
+    setSubjectEditing(false);
+    setSubjectDraft("");
+  };
+
+  const saveSubject = async () => {
+    if (!info || subjectSaving) return;
+    const subject = subjectDraft.trim();
+    if (!subject) {
+      setActionError(t("groups.subjectEmpty"));
+      return;
+    }
+    if (subject === info.subject) {
+      cancelSubjectEdit();
+      return;
+    }
+    setSubjectSaving(true);
+    setActionError(null);
+    try {
+      await setGroupSubject(chatId, subject);
+      setInfo((current) => (current ? { ...current, subject } : current));
+      cancelSubjectEdit();
+    } catch (cause) {
+      setActionError(friendlyError(cause, t("groups.subjectError")));
+    } finally {
+      setSubjectSaving(false);
+    }
+  };
+
+  const handleApprove = async (jid: string) => {
+    if (requestBusy !== null) return;
+    setRequestBusy({ jid, action: "approve" });
+    setActionError(null);
+    try {
+      await approveJoinRequests(chatId, [jid]);
+      setJoinRequests((current) =>
+        current.filter((request) => request.id !== jid),
+      );
+      setInfo((current) =>
+        current && !current.participants.includes(jid)
+          ? {
+              ...current,
+              participants: [...current.participants, jid],
+              participantCount: current.participantCount + 1,
+            }
+          : current,
+      );
+    } catch (cause) {
+      setActionError(friendlyError(cause, t("groups.joinRequestError")));
+    } finally {
+      setRequestBusy(null);
+    }
+  };
+
+  const handleReject = async (jid: string) => {
+    if (requestBusy !== null) return;
+    setRequestBusy({ jid, action: "reject" });
+    setActionError(null);
+    try {
+      await rejectJoinRequests(chatId, [jid]);
+      setJoinRequests((current) =>
+        current.filter((request) => request.id !== jid),
+      );
+    } catch (cause) {
+      setActionError(friendlyError(cause, t("groups.joinRequestError")));
+    } finally {
+      setRequestBusy(null);
     }
   };
 
@@ -262,7 +403,81 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
           <>
             <section className="group-info-hero">
               <div className="avatar group-avatar">{initials(info.subject)}</div>
-              <h3 className="group-info-subject">{info.subject}</h3>
+              {subjectEditing ? (
+                <form
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    marginTop: 12,
+                  }}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void saveSubject();
+                  }}
+                >
+                  <label
+                    className="modal-search"
+                    style={{ flex: 1, margin: 0 }}
+                  >
+                    <input
+                      type="text"
+                      value={subjectDraft}
+                      autoFocus
+                      maxLength={100}
+                      placeholder={t("groups.subjectPlaceholder")}
+                      aria-label={t("groups.editSubject")}
+                      onChange={(event) => setSubjectDraft(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="modal-action primary"
+                    disabled={subjectSaving || subjectDraft.trim().length === 0}
+                    title={t("groups.saveSubject")}
+                    aria-label={t("groups.saveSubject")}
+                  >
+                    {subjectSaving ? (
+                      <LoaderCircle size={16} className="spin" />
+                    ) : (
+                      <Check size={16} />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="modal-action secondary"
+                    disabled={subjectSaving}
+                    title={t("common.cancel")}
+                    aria-label={t("common.cancel")}
+                    onClick={cancelSubjectEdit}
+                  >
+                    <X size={16} />
+                  </button>
+                </form>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    marginTop: 12,
+                  }}
+                >
+                  <h3 className="group-info-subject" style={{ margin: 0 }}>
+                    {info.subject}
+                  </h3>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    title={t("groups.editSubject")}
+                    aria-label={t("groups.editSubject")}
+                    onClick={startSubjectEdit}
+                  >
+                    <Pencil size={15} />
+                  </button>
+                </div>
+              )}
               <p className="group-info-count">
                 {info.participantCount === 1
                   ? t("groups.participantOne")
@@ -301,7 +516,92 @@ export function GroupInfoPanel({ chatId, onClose }: GroupInfoPanelProps) {
                   )}
                 </span>
               </button>
+              <button
+                type="button"
+                className="group-info-row"
+                disabled={resetState === "loading"}
+                onClick={() => void handleReset()}
+              >
+                <span className="group-info-row-icon">
+                  {resetState === "done" ? (
+                    <Check size={18} />
+                  ) : (
+                    <RefreshCw size={18} />
+                  )}
+                </span>
+                <span className="group-info-row-label">
+                  {resetState === "done"
+                    ? t("groups.linkReset")
+                    : t("groups.resetLink")}
+                </span>
+                <span className="group-info-row-value">
+                  {resetState === "loading" ? (
+                    <LoaderCircle size={16} className="spin" />
+                  ) : (
+                    t("groups.reset")
+                  )}
+                </span>
+              </button>
             </section>
+
+            {joinRequests.length > 0 ? (
+              <section className="group-info-section">
+                <header className="group-info-section-header">
+                  <span>
+                    {t("groups.joinRequests", { count: joinRequests.length })}
+                  </span>
+                </header>
+                <div className="member-list">
+                  {joinRequests.map((request) => (
+                    <div key={request.id} className="member-row">
+                      <span className="avatar small">
+                        {initials(displayName(request.id))}
+                      </span>
+                      <span className="member-body">
+                        <span className="member-name">
+                          {displayName(request.id)}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="group-info-text-button"
+                        title={t("groups.approve")}
+                        aria-label={t("groups.approveAria", {
+                          name: displayName(request.id),
+                        })}
+                        disabled={requestBusy !== null}
+                        onClick={() => void handleApprove(request.id)}
+                      >
+                        {requestBusy?.jid === request.id &&
+                        requestBusy.action === "approve" ? (
+                          <LoaderCircle size={16} className="spin" />
+                        ) : (
+                          <UserCheck size={16} />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="group-info-text-button"
+                        style={{ color: "var(--danger)" }}
+                        title={t("groups.reject")}
+                        aria-label={t("groups.rejectAria", {
+                          name: displayName(request.id),
+                        })}
+                        disabled={requestBusy !== null}
+                        onClick={() => void handleReject(request.id)}
+                      >
+                        {requestBusy?.jid === request.id &&
+                        requestBusy.action === "reject" ? (
+                          <LoaderCircle size={16} className="spin" />
+                        ) : (
+                          <UserX size={16} />
+                        )}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
 
             <section className="group-info-section">
               <header className="group-info-section-header">

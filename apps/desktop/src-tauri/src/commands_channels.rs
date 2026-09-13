@@ -1,7 +1,7 @@
 //! Tauri commands for channels and status. Delegates to `whatsapp_core`.
 
 use tauri::State;
-use whatsapp_core::Jid;
+use whatsapp_core::{Jid, Message};
 
 use crate::state::AppState;
 
@@ -34,7 +34,7 @@ pub async fn channels_send(
     state: State<'_, AppState>,
     chat_id: String,
     text: String,
-) -> Result<(), String> {
+) -> Result<Message, String> {
     state
         .core()
         .send_channel_message(&Jid::new(chat_id), &text)

@@ -17,3 +17,10 @@ export interface GroupInfo {
   participants: Jid[];
   participantCount: number;
 }
+
+/** Mirror of the core's `JoinRequest` (camelCase over IPC). */
+export interface JoinRequest {
+  id: Jid;
+  /** Unix seconds when the request was created, when the server reports it. */
+  requestedAt?: number | null;
+}

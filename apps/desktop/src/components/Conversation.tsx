@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Archive, Bell, BellOff, CheckCheck, Info, Trash2 } from "lucide-react";
 import { avatarSrc } from "../lib/avatar";
 import { t, useTranslation } from "../lib/i18n";
+import { invokeCore, isTauri } from "../lib/ipc";
 import { initials } from "../lib/names";
 import { formatBubbleTime, formatDateDivider } from "../lib/time";
 import type { ChatSummary, Jid, Message } from "../lib/types";
@@ -43,6 +44,57 @@ import {
 const EMPTY_MESSAGES: Message[] = [];
 const EMPTY_PARTICIPANTS: MentionParticipant[] = [];
 
+/** Channels are `@newsletter` JIDs; only they use the channel post path. */
+function isChannelChat(chatId: Jid): boolean {
+  return chatId.endsWith("@newsletter");
+}
+
+/**
+ * Post to a channel through `channels_send`, keeping the store's optimistic
+ * echo behavior: the bubble appears as "pending" immediately and is reconciled
+ * with the stored message once the core acks. The store's `sendText` action
+ * only knows `send_text`, hence this dedicated path.
+ */
+function sendChannelText(chatId: Jid, text: string): void {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+
+  const optimistic: Message = {
+    id: `local-${crypto.randomUUID()}`,
+    chatId,
+    senderId: "me",
+    fromMe: true,
+    timestamp: Math.floor(Date.now() / 1000),
+    kind: "text",
+    text: trimmed,
+    status: "pending",
+  };
+  useAppStore.getState().appendMessage(optimistic);
+
+  if (!isTauri()) return;
+
+  void invokeCore<Message>("channels_send", { chatId, text: trimmed })
+    .then((stored) => {
+      // Swap the optimistic row for the stored one. The core also emits the
+      // stored message on the event bus, which may land before or after this
+      // ack; dropping both ids first keeps exactly one copy.
+      useAppStore.setState((state) => {
+        const current = state.messages[chatId] ?? [];
+        const rest = current.filter(
+          (message) =>
+            message.id !== optimistic.id && message.id !== stored.id,
+        );
+        return {
+          messages: { ...state.messages, [chatId]: [...rest, stored] },
+        };
+      });
+    })
+    .catch((error: unknown) => {
+      console.error("channel send failed", error);
+      useAppStore.getState().setMessageStatus(chatId, optimistic.id, "failed");
+    });
+}
+
 interface ConversationProps {
   chat: ChatSummary;
   /** Optional host hook for a contact-info panel; the header menu enables its
@@ -65,6 +117,7 @@ export function Conversation({ chat, onOpenContactInfo }: ConversationProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastTypingSentAt = useRef(0);
   const typingActive = useRef(false);
+  const isChannel = isChannelChat(chat.id);
 
   // Mention targets for group chats: senders seen in the loaded history,
   // labelled with the names the core's chat list provides.
@@ -108,6 +161,8 @@ export function Conversation({ chat, onOpenContactInfo }: ConversationProps) {
   // Throttled outgoing typing state: signal at most every 7 s while typing and
   // signal "paused" as soon as the composer empties or the message goes out.
   const handleTyping = (hasText: boolean) => {
+    // Channels do not carry typing indicators.
+    if (isChannel) return;
     const now = Date.now();
     if (hasText) {
       if (!typingActive.current || now - lastTypingSentAt.current > 7000) {
@@ -141,8 +196,18 @@ export function Conversation({ chat, onOpenContactInfo }: ConversationProps) {
       </div>
       <Composer
         chatId={chat.id}
+        isChannel={isChannel}
         participants={participants}
-        onSend={(text, mentions) => sendText(chat.id, text, mentions)}
+        onSend={(text, mentions) => {
+          if (isChannel) {
+            // `channels_send` only carries text: drop the reply target the
+            // way `sendText` would, so the quote banner cannot linger.
+            setReplyTo(null);
+            sendChannelText(chat.id, text);
+            return;
+          }
+          sendText(chat.id, text, mentions);
+        }}
         onTyping={handleTyping}
         replyTo={activeReply}
         onCancelReply={() => setReplyTo(null)}
@@ -278,15 +343,17 @@ function ConversationHeader({
 
   const subtitle = typing
     ? t("conversation.typing")
-    : chat.isGroup
-      ? t("conversation.group")
-      : presence?.online
-        ? t("conversation.online")
-        : presence?.lastSeenTs
-          ? t("conversation.lastSeen", {
-              time: formatBubbleTime(presence.lastSeenTs),
-            })
-          : null;
+    : isChannelChat(chat.id)
+      ? t("conversation.channel")
+      : chat.isGroup
+        ? t("conversation.group")
+        : presence?.online
+          ? t("conversation.online")
+          : presence?.lastSeenTs
+            ? t("conversation.lastSeen", {
+                time: formatBubbleTime(presence.lastSeenTs),
+              })
+            : null;
 
   return (
     <>
@@ -442,6 +509,8 @@ function renderMessages(
 
 interface ComposerProps {
   chatId: Jid;
+  /** True for `@newsletter` chats, which post text only. */
+  isChannel: boolean;
   /** Group participants the mention menu offers; empty for direct chats. */
   participants: MentionParticipant[];
   onSend: (text: string, mentions: Jid[]) => void;
@@ -455,6 +524,7 @@ interface ComposerProps {
 
 function Composer({
   chatId,
+  isChannel,
   participants,
   onSend,
   onTyping,
@@ -704,7 +774,7 @@ function Composer({
           onClose={() => setEmojiOpen(false)}
         />
       )}
-      {attachOpen && (
+      {!isChannel && attachOpen && (
         <AttachmentMenu
           onPick={handleAttach}
           onClose={() => setAttachOpen(false)}
@@ -768,15 +838,17 @@ function Composer({
         >
           <Smile size={24} />
         </button>
-        <button
-          type="button"
-          className="icon-button"
-          title={t("conversation.attach")}
-          aria-expanded={attachOpen}
-          onClick={toggleAttach}
-        >
-          <Paperclip size={24} />
-        </button>
+        {!isChannel && (
+          <button
+            type="button"
+            className="icon-button"
+            title={t("conversation.attach")}
+            aria-expanded={attachOpen}
+            onClick={toggleAttach}
+          >
+            <Paperclip size={24} />
+          </button>
+        )}
 
         <textarea
           ref={textareaRef}
