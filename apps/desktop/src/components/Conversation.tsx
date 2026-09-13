@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { avatarSrc } from "../lib/avatar";
 import { initials } from "../lib/names";
-import { formatDateDivider } from "../lib/time";
+import { formatBubbleTime, formatDateDivider } from "../lib/time";
 import type { ChatSummary, Jid, Message } from "../lib/types";
 import { useAppStore, type MessageQuote } from "../store/app";
 import { AttachmentMenu, type AttachmentKind } from "./AttachmentMenu";
@@ -171,15 +171,24 @@ function ConversationHeader({ chat }: { chat: ChatSummary }) {
     (state) => state.typingByChat[chat.id] ?? false,
   );
   const startCall = useAppStore((state) => state.startCall);
+  const presence = useAppStore((state) => state.presenceByChat[chat.id]);
+
+  const subtitle = typing
+    ? "typing…"
+    : chat.isGroup
+      ? "Group"
+      : presence?.online
+        ? "online"
+        : presence?.lastSeenTs
+          ? `last seen ${formatBubbleTime(presence.lastSeenTs)}`
+          : null;
 
   return (
     <header className="conversation-header" data-tauri-drag-region>
       <ConversationAvatar chat={chat} />
       <div className="conversation-title" data-tauri-drag-region>
         <span className="conversation-name">{chat.name}</span>
-        <span className="conversation-subtitle">
-          {typing ? "typing…" : chat.isGroup ? "Group" : "online"}
-        </span>
+        {subtitle && <span className="conversation-subtitle">{subtitle}</span>}
       </div>
       <div className="header-actions no-drag">
         <button type="button" className="icon-button" title="Search">

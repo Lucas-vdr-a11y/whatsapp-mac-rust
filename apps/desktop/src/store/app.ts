@@ -225,6 +225,10 @@ interface AppState {
   typingByChat: Record<Jid, boolean>;
   /** Avatar URLs or local paths by chat, when resolved. */
   avatars: Record<Jid, string>;
+  /** Online/last-seen presence per contact. */
+  presenceByChat: Record<Jid, { online: boolean; lastSeenTs: number | null }>;
+  /** Apply a presence update from the protocol. */
+  setPresence: (jid: Jid, online: boolean, lastSeenTs: number | null) => void;
   /** Update the received typing state for a chat. */
   setChatTyping: (chatId: Jid, isTyping: boolean) => void;
   /** Tell the protocol that we started or stopped typing. */
@@ -741,6 +745,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     typingByChat: {},
     avatars: {},
+    presenceByChat: {},
 
     setChatTyping: (chatId, isTyping) =>
       set((state) => ({
@@ -757,6 +762,14 @@ export const useAppStore = create<AppState>((set, get) => {
     setAvatar: (chatId, avatar) =>
       set((state) => ({
         avatars: { ...state.avatars, [chatId]: avatar },
+      })),
+
+    setPresence: (jid, online, lastSeenTs) =>
+      set((state) => ({
+        presenceByChat: {
+          ...state.presenceByChat,
+          [jid]: { online, lastSeenTs },
+        },
       })),
 
     loadAvatar: (chatId) => {

@@ -137,6 +137,16 @@ export function useCoreBridge(): void {
           );
           break;
 
+        case "presence":
+          useAppStore
+            .getState()
+            .setPresence(
+              coreEvent.payload.jid,
+              coreEvent.payload.online,
+              coreEvent.payload.lastSeenTs,
+            );
+          break;
+
         case "reaction":
           useAppStore
             .getState()
