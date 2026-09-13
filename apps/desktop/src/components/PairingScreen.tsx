@@ -32,10 +32,11 @@ export function PairingScreen() {
   }, [startPairing]);
 
   const payload = qrCode ?? MOCK_QR;
-  const statusText =
-    connection === "connecting" || starting
+  const statusText = qrCode
+    ? "Waiting for you to scan the code"
+    : connection === "connecting" || starting
       ? "Connecting to WhatsApp…"
-      : qrCode || !isTauri()
+      : !isTauri()
         ? "Waiting for you to scan the code"
         : "Preparing pairing…";
 
