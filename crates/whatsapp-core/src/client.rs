@@ -12,8 +12,8 @@
 
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::sync::{Mutex, broadcast};
 use whatsapp_rust::chrono::{DateTime, Utc};
@@ -60,7 +60,7 @@ pub struct WaClient {
     store: Arc<Store>,
     events: broadcast::Sender<CoreEvent>,
     handle: Mutex<Option<BotHandle>>,
-    own_jid: Mutex<Option<Jid>>,
+    own_jid: Arc<StdMutex<Option<Jid>>>,
     /// 0 = disconnected, 1 = connecting, 2 = connected. Shared with event
     /// handlers so upstream lifecycle events update the state machine.
     connection: Arc<AtomicU8>,
@@ -75,7 +75,7 @@ impl WaClient {
             store,
             events,
             handle: Mutex::new(None),
-            own_jid: Mutex::new(None),
+            own_jid: Arc::new(StdMutex::new(None)),
             connection: Arc::new(AtomicU8::new(0)),
         }
     }
@@ -100,8 +100,8 @@ impl WaClient {
     }
 
     /// The account's own JID, once known.
-    pub async fn own_jid(&self) -> Option<Jid> {
-        self.own_jid.lock().await.clone()
+    pub fn own_jid(&self) -> Option<Jid> {
+        self.own_jid.lock().ok().and_then(|guard| guard.clone())
     }
 
     /// Create the session store and start connecting. QR codes (or pair codes)
@@ -189,11 +189,13 @@ impl WaClient {
                 ],
                 {
                     let connection = Arc::clone(&self.connection);
+                    let own_jid = Arc::clone(&self.own_jid);
                     move |event, _client| {
                         let bus = bus_lifecycle.clone();
                         let connection = Arc::clone(&connection);
+                        let own_jid = Arc::clone(&own_jid);
                         async move {
-                            handle_lifecycle_event(&bus, event.as_ref(), &connection);
+                            handle_lifecycle_event(&bus, event.as_ref(), &connection, &own_jid);
                         }
                     }
                 },
@@ -244,7 +246,7 @@ impl WaClient {
             client.logout().await;
             handle.shutdown().await;
         }
-        self.own_jid.lock().await.take();
+        self.own_jid.lock().ok().map(|mut guard| guard.take());
         self.set_connection(ConnectionState::Disconnected, None);
         Ok(())
     }
@@ -266,8 +268,8 @@ impl WaClient {
         let sender_id = self
             .own_jid
             .lock()
-            .await
-            .clone()
+            .ok()
+            .and_then(|guard| guard.clone())
             .unwrap_or_else(|| Jid::new(ME_PLACEHOLDER));
 
         let message = Message {
@@ -329,6 +331,7 @@ fn handle_lifecycle_event(
     bus: &broadcast::Sender<CoreEvent>,
     event: &Event,
     connection: &AtomicU8,
+    own_jid: &StdMutex<Option<Jid>>,
 ) {
     match event {
         Event::Disconnected(_) => {
@@ -339,6 +342,9 @@ fn handle_lifecycle_event(
             }));
         }
         Event::PairSuccess(success) => {
+            if let Ok(mut guard) = own_jid.lock() {
+                *guard = Some(from_upstream_jid(&success.id));
+            }
             let _ = bus.send(CoreEvent::Pairing(PairingEvent::PairSuccess {
                 jid: from_upstream_jid(&success.id),
             }));
@@ -521,4 +527,74 @@ fn now_unix() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whatsapp_rust::buffa::MessageField;
+
+    fn sample_message() -> Message {
+        Message {
+            id: "msg-1".to_owned(),
+            chat_id: Jid::new("alice@s.whatsapp.net"),
+            sender_id: Jid::new("alice@s.whatsapp.net"),
+            from_me: false,
+            timestamp: 1_700_000_000,
+            kind: MessageKind::Text,
+            text: Some("hello".to_owned()),
+            status: MessageStatus::Delivered,
+        }
+    }
+
+    #[test]
+    fn classifies_plain_text() {
+        let message = wa::Message {
+            conversation: Some("hello".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(classify(&message), MessageKind::Text);
+    }
+
+    #[test]
+    fn classifies_voice_note_and_audio() {
+        let mut message = wa::Message::default();
+        message.audio_message = MessageField::some(wa::message::AudioMessage {
+            ptt: Some(true),
+            ..Default::default()
+        });
+        assert_eq!(classify(&message), MessageKind::VoiceNote);
+
+        message.audio_message = MessageField::some(wa::message::AudioMessage {
+            ptt: Some(false),
+            ..Default::default()
+        });
+        assert_eq!(classify(&message), MessageKind::Audio);
+    }
+
+    #[test]
+    fn classifies_unknown_as_unsupported() {
+        assert_eq!(classify(&wa::Message::default()), MessageKind::Unsupported);
+    }
+
+    #[test]
+    fn previews_text_and_media() {
+        assert_eq!(preview_for(&sample_message()), "hello");
+
+        let media = Message {
+            kind: MessageKind::Image,
+            text: None,
+            ..sample_message()
+        };
+        assert_eq!(preview_for(&media), "[Photo]");
+    }
+
+    #[test]
+    fn previews_are_truncated() {
+        let long = Message {
+            text: Some("x".repeat(500)),
+            ..sample_message()
+        };
+        assert_eq!(preview_for(&long).chars().count(), 120);
+    }
 }
