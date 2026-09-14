@@ -1,0 +1,15 @@
+[package]
+name = "wa-api-check"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal"] }
+whatsapp-rust = { version = "0.7", default-features = false, features = [
+    "sqlite-storage",
+    "tokio-transport",
+    "tokio-runtime",
+    "ureq-client",
+    "tokio-native",
+    "signal",
+] }

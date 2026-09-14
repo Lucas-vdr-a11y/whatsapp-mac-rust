@@ -1,0 +1,17 @@
+/* Style entry point. Import order matters: tokens, then globals, then
+ * component styles. New style areas get their own file so parallel work does
+ * not conflict. */
+
+@import "./tokens.css";
+@import "./global.css";
+@import "./components.css";
+@import "./panels.css";
+@import "./screens.css";
+@import "./conversation-ui.css";
+@import "./groups.css";
+@import "./settings.css";
+@import "./calls.css";
+@import "./composer.css";
+@import "./business.css";
+@import "./security.css";
+@import "./status.css";

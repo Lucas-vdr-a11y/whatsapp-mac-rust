@@ -1,9 +1,12 @@
 /*
  * Design tokens.
  *
- * Values mirror the current WhatsApp desktop design system. Both themes are
- * provided; the app defaults to dark, matching macOS appearance settings later.
- * No proprietary assets are referenced here.
+ * Light values are measured from the official macOS client (26.x) with its
+ * window active: rail #f2f2f2, chat list white, wallpaper #f5f1eb with
+ * #e7ddd0 doodles, bubbles #d9fdd3 / #ffffff, brand green #1daa61.
+ * Both themes are provided; the app follows the system appearance.
+ *
+ * No proprietary assets are referenced here — colors and metrics only.
  */
 
 :root,
@@ -11,107 +14,132 @@
   color-scheme: dark;
 
   /* Surfaces */
-  --bg-rail: #111b21;
-  --bg-panel: #111b21;
-  --bg-header: #202c33;
-  --bg-chat: #0b141a;
-  --bg-input: #2a3942;
-  --bg-hover: rgba(233, 237, 239, 0.05);
-  --bg-active: #2a3942;
-  --bg-selected: #2a3942;
-  --bg-modal: #111b21;
-  --bg-badge: #00a884;
+  --bg-rail: #161717;
+  --bg-panel: #161717;
+  --bg-header: #1d1f1f;
+  --doodle: #1f2121;
+  --bg-chat: #161717;
+  --bg-input: #242626;
+  --bg-hover: rgba(255, 255, 255, 0.1);
+  --bg-active: #242626;
+  --bg-selected: rgba(255, 255, 255, 0.1);
+  --bg-modal: #161717;
+  --bg-badge: #21c063;
 
   /* Text */
-  --text-primary: #e9edef;
-  --text-secondary: #8696a0;
-  --text-muted: #667781;
-  --text-inverse: #111b21;
+  --text-primary: #fafafa;
+  --text-secondary: rgba(255, 255, 255, 0.6);
+  --text-muted: #757778;
+  --text-inverse: #0a0a0a;
+  --text-title: #aebac1;
+  --text-header: #d1d7db;
+  --text-header-subtle: #8696a0;
+  --empty-mark: #8a8d8d;
+
+  /* Lines and fields */
+  --icon-muted: #8696a0;
+  --search-border: rgba(255, 255, 255, 0.12);
+  --composer-border: rgba(255, 255, 255, 0.12);
+  --header-border: rgba(255, 255, 255, 0.08);
+  --pill-border: rgba(255, 255, 255, 0.12);
 
   /* Icons */
-  --icon: #aebac1;
-  --icon-strong: #e9edef;
+  --icon: #fafafa;
+  --icon-strong: #fafafa;
 
   /* Brand */
-  --accent: #00a884;
-  --accent-strong: #06cf9c;
+  --accent: #21c063;
+  --accent-strong: #d9fdd3;
 
   /* Bubbles */
-  --bubble-in: #202c33;
-  --bubble-out: #005c4b;
-  --bubble-text: #e9edef;
+  --bubble-in: #242626;
+  --bubble-out: #144d37;
+  --bubble-text: #fafafa;
 
   /* Semantic */
-  --link: #53bdeb;
-  --divider: rgba(134, 150, 160, 0.15);
+  --link: #21c063;
+  --divider: rgba(255, 255, 255, 0.1);
   --danger: #f15c6d;
   --warning: #ffbc38;
   --tick-read: #53bdeb;
-  --unread-badge: #00a884;
-  --unread-badge-text: #111b21;
+  --unread-badge: #21c063;
+  --unread-badge-text: #0a0a0a;
 
   /* Elevation */
-  --shadow-bubble: 0 1px 0.5px rgba(11, 20, 26, 0.13);
-  --shadow-modal: 0 12px 44px rgba(11, 20, 26, 0.6);
+  --shadow-bubble: 0 1px 0.5px rgba(0, 0, 0, 0.13);
+  --shadow-modal: 0 12px 44px rgba(0, 0, 0, 0.6);
 
-  /* Geometry */
-  --rail-width: 64px;
-  --list-width: 400px;
-  --header-height: 59px;
-  --composer-height: 62px;
+  /* Geometry (measured from the production macOS client) */
+  --rail-width: 67px;
+  --list-width: 368px;
+  --header-height: 52px;
+  --composer-height: 52px;
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  --radius-bubble: 8px;
   --radius-full: 9999px;
 
   /* Typography */
   --font-ui:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial,
     sans-serif;
-  --font-size-chat-title: 22px;
-  --font-size-list-name: 17px;
+  --font-size-chat-title: 17px;
+  --font-size-list-name: 14px;
   --font-size-list-preview: 14px;
-  --font-size-message: 14.2px;
+  --font-size-message: 14px;
   --font-size-meta: 12px;
-  --font-size-time: 11px;
+  --font-size-time: 12px;
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --bg-rail: #ffffff;
+  --bg-rail: #f2f2f2;
   --bg-panel: #ffffff;
-  --bg-header: #f0f2f5;
-  --bg-chat: #efeae2;
+  --bg-header: #f4f4f4;
+  --doodle: #eae0d3;
+  --bg-chat: #f5f1eb;
   --bg-input: #ffffff;
-  --bg-hover: rgba(11, 20, 26, 0.05);
-  --bg-active: #e9edef;
-  --bg-selected: #f0f2f5;
+  --bg-hover: rgba(11, 20, 26, 0.06);
+  --bg-active: #dfdfdf;
+  --bg-selected: #f6f5f5;
   --bg-modal: #ffffff;
-  --bg-badge: #00a884;
+  --bg-badge: #1daa61;
 
-  --text-primary: #111b21;
-  --text-secondary: #667781;
+  --text-primary: #0a0a0a;
+  --text-secondary: #6a6c6c;
   --text-muted: #8696a0;
   --text-inverse: #ffffff;
+  --text-title: #9e9e9e;
+  --text-header: #8a8a8a;
+  --text-header-subtle: #b2b2b2;
+  --empty-mark: #5f6161;
 
-  --icon: #54656f;
-  --icon-strong: #111b21;
+  --icon-muted: #9e9e9e;
+  --search-border: #f0f0f0;
+  --composer-border: #d2d2d2;
+  --header-border: rgba(0, 0, 0, 0.14);
+  --pill-border: #e9e9e9;
 
-  --accent: #00a884;
-  --accent-strong: #06cf9c;
+  --icon: #717171;
+  --icon-strong: #676767;
+
+  --accent: #1daa61;
+  --accent-strong: #15603e;
 
   --bubble-in: #ffffff;
   --bubble-out: #d9fdd3;
-  --bubble-text: #111b21;
+  --bubble-text: #0a0a0a;
 
-  --link: #027eb5;
-  --divider: #e9edef;
+  --link: #1daa61;
+  --divider: rgba(0, 0, 0, 0.08);
   --danger: #ea0038;
-  --tick-read: #53bdeb;
-  --unread-badge: #00a884;
+  --warning: #d97706;
+  --tick-read: #007bfc;
+  --unread-badge: #1daa61;
   --unread-badge-text: #ffffff;
 
-  --shadow-bubble: 0 1px 0.5px rgba(11, 20, 26, 0.13);
-  --shadow-modal: 0 12px 44px rgba(11, 20, 26, 0.26);
+  --shadow-bubble: 0 1px 0.5px rgba(0, 0, 0, 0.13);
+  --shadow-modal: 0 12px 44px rgba(0, 0, 0, 0.26);
 }

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "chat",
+  "description": "Ephemeral per-chat windows: core IPC and core events only. The host commands (open_chat_window / close_chat_window) are app commands and need no permission entry.",
+  "windows": ["chat-*"],
+  "permissions": ["core:default"]
+}

@@ -1,23 +1,300 @@
 /** Bridges core events from the Rust host into the UI store. */
 
-import { useEffect } from "react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { listenCore } from "./ipc";
-import { useAppStore } from "../store/app";
+import { useCallback, useEffect, useRef } from "react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invokeCore, isTauri, listenCore } from "./ipc";
+import type { ChatSummary, CoreEvent } from "./types";
+import { useAppStore, type CallUpdate } from "../store/app";
+
+/** How long an ended/missed card stays up before the overlay is dismissed. */
+const CALL_CLEAR_DELAY_MS = 2000;
+
+/**
+ * The core's `call` event is feature-gated on the Rust side (`calls` cargo
+ * feature), so it is not yet part of the static [`CoreEvent`] union. Its shape
+ * mirrors `CoreEvent::Call(CallUpdate)` serialized by serde:
+ * `{ type: "call", payload: <CallUpdate> }`.
+ */
+interface CallCoreEvent {
+  type: "call";
+  payload: CallUpdate;
+}
 
 export function useCoreBridge(): void {
   const appendMessage = useAppStore((state) => state.appendMessage);
+  const setConnection = useAppStore((state) => state.setConnection);
+  const setQrCode = useAppStore((state) => state.setQrCode);
+  const setPairingExpired = useAppStore((state) => state.setPairingExpired);
+  const setPairCode = useAppStore((state) => state.setPairCode);
+  const markPaired = useAppStore((state) => state.markPaired);
+  const setChats = useAppStore((state) => state.setChats);
+  const setMessageStatus = useAppStore((state) => state.setMessageStatus);
+  const setCall = useAppStore((state) => state.setCall);
+  const clearCall = useAppStore((state) => state.clearCall);
+  const hydrateTimer = useRef<number | null>(null);
+  const pendingReloads = useRef(new Set<string>());
+  const typingTimers = useRef<Record<string, number>>({});
+  const callClearTimer = useRef<number | null>(null);
+
+  const hydrateChats = useCallback(async () => {
+    if (!isTauri()) return;
+    try {
+      setChats(await invokeCore<ChatSummary[]>("list_chats"));
+    } catch (error) {
+      console.warn("failed to load chats", error);
+    }
+  }, [setChats]);
 
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
+    let unlistenOpenChat: UnlistenFn | null = null;
     let cancelled = false;
 
+    // A session that survives a restart reconnects without a QR scan; the
+    // chat list may already be on disk.
+    void hydrateChats();
+
+    // A UI reload (dev HMR, window recreation) does not touch the core, so
+    // ask for the live connection state before falling back to the pairing
+    // screen for an already-linked device.
+    void invokeCore<string>("core_connection_state")
+      .then((state) => {
+        if (state === "connected" && !cancelled) {
+          markPaired();
+          void hydrateChats();
+        }
+      })
+      .catch(() => {
+        // Older builds do not expose the command; the connection event
+        // still covers a fresh connect.
+      });
+
+    /** Open a chat from a deep link, creating it locally when unknown. */
+    const openChat = (chatId: string) => {
+      const store = useAppStore.getState();
+      if (store.chats.some((chat) => chat.id === chatId)) {
+        store.selectChat(chatId);
+      } else {
+        store.startChat(chatId, chatId.split("@")[0] ?? chatId);
+      }
+    };
+
+    // `rustwa://chat/<jid>` deep links, delivered while the app runs.
+    void listen<{ chatId: string }>("ui://open-chat", (event) => {
+      const chatId = event.payload?.chatId;
+      if (chatId) openChat(chatId);
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlistenOpenChat = fn;
+      }
+    });
+
+    // App lock: the host asks for the overlay on focus-after-timeout and
+    // tells us when biometry succeeded.
+    let unlistenLock: UnlistenFn | null = null;
+    let unlistenUnlocked: UnlistenFn | null = null;
+    void listen("ui://lock", () =>
+      useAppStore.getState().setLocked(true),
+    ).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlistenLock = fn;
+      }
+    });
+    void listen("ui://unlocked", () =>
+      useAppStore.getState().setLocked(false),
+    ).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlistenUnlocked = fn;
+      }
+    });
+
+    // A deep link that arrived before the UI mounted (cold start).
+    void invokeCore<string | null>("deep_link_ready")
+      .then((chatId) => {
+        if (chatId && !cancelled) openChat(chatId);
+      })
+      .catch(() => {
+        // Deep links may be unavailable (older build, browser mode).
+      });
+
     listenCore((event) => {
-      switch (event.type) {
-        case "message":
-          appendMessage(event.payload);
+      // Asserted to the wider union: the `call` variant is feature-gated on
+      // the Rust side and not in the static `CoreEvent` union yet.
+      const coreEvent = event as CoreEvent | CallCoreEvent;
+      switch (coreEvent.type) {
+        case "connection":
+          setConnection(coreEvent.payload.state);
+          if (coreEvent.payload.state === "connected") {
+            // Reconnects (existing session) also imply a usable client.
+            markPaired();
+            void hydrateChats();
+          }
           break;
-        // Other event types are handled as their milestones land.
+
+        case "pairing": {
+          const payload = coreEvent.payload;
+          switch (payload.kind) {
+            case "qrCode":
+              setQrCode(payload.code, payload.timeoutSecs);
+              break;
+            case "qrCodesExhausted":
+              setPairingExpired(true);
+              break;
+            case "pairCode":
+              setPairCode(payload.code);
+              break;
+            case "pairSuccess":
+              markPaired(payload.jid);
+              void hydrateChats();
+              break;
+            case "pairFailure":
+              setPairingExpired(true);
+              break;
+          }
+          break;
+        }
+
+        case "typing": {
+          const { chatId, isTyping } = coreEvent.payload;
+          useAppStore.getState().setChatTyping(chatId, isTyping);
+          const previous = typingTimers.current[chatId];
+          if (previous !== undefined) window.clearTimeout(previous);
+          if (isTyping) {
+            typingTimers.current[chatId] = window.setTimeout(() => {
+              useAppStore.getState().setChatTyping(chatId, false);
+            }, 15000);
+          } else {
+            delete typingTimers.current[chatId];
+          }
+          break;
+        }
+
+        case "messageStatusChanged":
+          setMessageStatus(
+            coreEvent.payload.chatId,
+            coreEvent.payload.messageId,
+            coreEvent.payload.status,
+          );
+          break;
+
+        case "presence":
+          useAppStore
+            .getState()
+            .setPresence(
+              coreEvent.payload.jid,
+              coreEvent.payload.online,
+              coreEvent.payload.lastSeenTs,
+            );
+          break;
+
+        case "reaction":
+          useAppStore
+            .getState()
+            .applyCoreReaction(
+              coreEvent.payload.messageId,
+              coreEvent.payload.reactor,
+              coreEvent.payload.emoji,
+            );
+          break;
+
+        case "messageEdited":
+          useAppStore
+            .getState()
+            .applyCoreEdit(
+              coreEvent.payload.chatId,
+              coreEvent.payload.messageId,
+              coreEvent.payload.text,
+            );
+          break;
+
+        case "messageRevoked":
+          useAppStore
+            .getState()
+            .applyCoreRevoke(
+              coreEvent.payload.chatId,
+              coreEvent.payload.messageId,
+            );
+          break;
+
+        case "chatUpdated":
+          // History sync emits bursts of these; debounce the rehydrate and
+          // reload any conversation that is already on screen.
+          pendingReloads.current.add(coreEvent.payload.chatId);
+          if (hydrateTimer.current === null) {
+            hydrateTimer.current = window.setTimeout(() => {
+              hydrateTimer.current = null;
+              void hydrateChats();
+              const ids = [...pendingReloads.current];
+              pendingReloads.current.clear();
+              const store = useAppStore.getState();
+              for (const id of ids) {
+                if (store.loadedChatIds[id] || store.selectedChatId === id) {
+                  store.reloadMessages(id);
+                }
+              }
+            }, 400);
+          }
+          break;
+
+        case "message": {
+          const message = coreEvent.payload;
+          appendMessage(message);
+
+          // Native notification for incoming messages while the window is
+          // hidden. Best-effort: permission may still be pending.
+          if (!message.fromMe && document.hidden) {
+            const chat = useAppStore
+              .getState()
+              .chats.find((candidate) => candidate.id === message.chatId);
+            const title = chat?.name ?? "New message";
+            const body = message.text ?? "[Media]";
+            void invokeCore("notify_for_chat", {
+              chatId: message.chatId,
+              title,
+              body,
+            }).catch(() => {
+              // Fall back to the plain notification on older builds.
+              void invokeCore("notify", { title, body }).catch(() => {
+                // Notification delivery is not critical; ignore failures.
+              });
+            });
+          }
+          break;
+        }
+
+        case "call": {
+          const update = coreEvent.payload;
+
+          // `setCall` also records the history row synchronously, so a
+          // terminal update can be cleared without losing the entry.
+          setCall(update);
+
+          if (callClearTimer.current !== null) {
+            window.clearTimeout(callClearTimer.current);
+            callClearTimer.current = null;
+          }
+
+          if (
+            update.type === "ended" ||
+            update.type === "missed" ||
+            update.type === "endedElsewhere"
+          ) {
+            const { callId } = update.payload;
+            callClearTimer.current = window.setTimeout(() => {
+              callClearTimer.current = null;
+              clearCall(callId);
+            }, CALL_CLEAR_DELAY_MS);
+          }
+          break;
+        }
+
+        // The remaining event types are wired up as their milestones land.
         default:
           break;
       }
@@ -32,6 +309,33 @@ export function useCoreBridge(): void {
     return () => {
       cancelled = true;
       unlisten?.();
+      unlistenOpenChat?.();
+      unlistenLock?.();
+      unlistenUnlocked?.();
+      if (hydrateTimer.current !== null) {
+        window.clearTimeout(hydrateTimer.current);
+        hydrateTimer.current = null;
+      }
+      for (const timer of Object.values(typingTimers.current)) {
+        window.clearTimeout(timer);
+      }
+      typingTimers.current = {};
+      pendingReloads.current.clear();
+      if (callClearTimer.current !== null) {
+        window.clearTimeout(callClearTimer.current);
+        callClearTimer.current = null;
+      }
     };
-  }, [appendMessage]);
+  }, [
+    appendMessage,
+    setConnection,
+    setQrCode,
+    setPairingExpired,
+    setPairCode,
+    markPaired,
+    setMessageStatus,
+    setCall,
+    clearCall,
+    hydrateChats,
+  ]);
 }

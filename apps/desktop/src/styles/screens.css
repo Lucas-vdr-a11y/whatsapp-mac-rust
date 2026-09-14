@@ -1,0 +1,1343 @@
+/* Screens: calls, status, channels, communities.
+ * Owned by the screens workstream. */
+
+/* ------------------------------------------------------------------ */
+/* Shared screen pieces                                                 */
+/* ------------------------------------------------------------------ */
+
+/* `.chat-list` is a grid item with `min-height: auto`; without this its
+ * min-content height grows the app row past 100vh and the list column gets
+ * clipped instead of scrolling. Scoped to screens so ChatList is untouched. */
+.chat-list.screen {
+  min-height: 0;
+}
+
+.screen-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 12px;
+}
+
+.screen-section-label {
+  padding: 16px 22px 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.screen-section-label.accent {
+  color: var(--accent-strong);
+}
+
+/* Entry rows: "Start new call", "Find channels", "New community". */
+.screen-entry {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  height: 72px;
+  padding: 0 12px 0 16px;
+  text-align: left;
+}
+
+.screen-entry:hover {
+  background: var(--bg-hover);
+}
+
+.screen-entry-icon {
+  flex: none;
+  width: 49px;
+  height: 49px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: rgba(0, 168, 132, 0.16);
+  color: var(--accent-strong);
+}
+
+.screen-entry-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.screen-entry-title {
+  font-size: var(--font-size-list-name);
+  color: var(--text-primary);
+}
+
+.screen-entry-hint {
+  font-size: var(--font-size-list-preview);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Empty state. */
+.screen-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 56px 32px;
+  text-align: center;
+}
+
+.screen-empty-icon {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 10px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--bg-header);
+  color: var(--text-secondary);
+}
+
+.screen-empty-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.screen-empty-hint {
+  margin: 0;
+  max-width: 260px;
+  font-size: 13.5px;
+  line-height: 19px;
+  color: var(--text-secondary);
+}
+
+/* Inline feedback for screens that talk to the core. */
+.screen-notice {
+  margin: 0 16px 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 168, 132, 0.14);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-primary);
+}
+
+.screen-inline-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(241, 92, 109, 0.12);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.screen-inline-error p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.screen-inline-error .modal-action {
+  flex: none;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.screen-loading {
+  margin: 0;
+  padding: 28px 22px;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ */
+/* Calls                                                                */
+/* ------------------------------------------------------------------ */
+
+.call-item {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  height: 72px;
+  padding: 0 12px 0 16px;
+}
+
+.call-item:hover {
+  background: var(--bg-hover);
+}
+
+.call-item-body {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.call-item-top,
+.call-item-bottom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.call-item-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-list-name);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.call-item-time {
+  flex: none;
+  font-size: var(--font-size-meta);
+  color: var(--text-secondary);
+}
+
+.call-status {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-size-list-preview);
+  color: var(--text-secondary);
+}
+
+.call-status svg {
+  flex: none;
+}
+
+.call-status.missed svg {
+  color: var(--danger);
+}
+
+.call-status.outgoing svg {
+  color: var(--accent-strong);
+}
+
+.call-status.incoming svg {
+  color: var(--link);
+}
+
+.call-status-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Row actions reveal on hover / keyboard focus. */
+.call-item-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.call-item-actions .icon-button {
+  width: 34px;
+  height: 34px;
+}
+
+.call-item:hover .call-item-actions,
+.call-item:focus-within .call-item-actions {
+  opacity: 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Status                                                               */
+/* ------------------------------------------------------------------ */
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  height: 72px;
+  padding: 0 12px 0 16px;
+}
+
+.status-item:hover {
+  background: var(--bg-hover);
+}
+
+.status-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.status-item-name {
+  font-size: var(--font-size-list-name);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-item-preview {
+  font-size: var(--font-size-list-preview);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ring around a 49px avatar: 3px gradient for unseen, 2px gray for viewed,
+ * dashed for the "add update" affordance. */
+.status-ring {
+  position: relative;
+  flex: none;
+  width: 55px;
+  height: 55px;
+  padding: 3px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: linear-gradient(150deg, var(--accent), var(--accent-strong));
+}
+
+.status-ring.viewed {
+  padding: 1px;
+  background: none;
+  border: 2px solid rgba(134, 150, 160, 0.4);
+}
+
+.status-ring.dashed {
+  padding: 1px;
+  background: none;
+  border: 2px dashed var(--text-muted);
+}
+
+.status-add-badge {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--bg-panel);
+  background: var(--accent);
+  color: var(--text-inverse);
+}
+
+.status-muted-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 22px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.status-muted-header:hover {
+  background: var(--bg-hover);
+}
+
+.status-muted-count {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--bg-input);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+.status-muted-chevron {
+  margin-left: auto;
+}
+
+/* "My status" is a real button so the composer is keyboard reachable. */
+.status-item-button {
+  width: 100%;
+  text-align: left;
+}
+
+/* Milestone note: calm, secondary, only rendered inside the Tauri host. */
+.status-milestone-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 16px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-header);
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+.status-milestone-note svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+/* Text status composer (uses the shared `.modal-backdrop`). */
+.status-composer {
+  display: flex;
+  flex-direction: column;
+  width: min(420px, calc(100vw - 48px));
+  border-radius: var(--radius-md);
+  background: var(--bg-modal);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+.status-composer-input {
+  margin: 14px 16px 0;
+  padding: 12px 14px;
+  min-height: 104px;
+  resize: none;
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 21px;
+}
+
+.status-composer-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.status-composer-count {
+  margin: 6px 18px 0;
+  font-size: var(--font-size-time);
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.status-composer-swatches {
+  display: flex;
+  gap: 12px;
+  padding: 12px 18px 2px;
+}
+
+.status-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 1px rgba(134, 150, 160, 0.35);
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.status-swatch:hover {
+  transform: scale(1.08);
+}
+
+.status-swatch.selected {
+  box-shadow:
+    0 0 0 2px var(--bg-modal),
+    0 0 0 4px var(--text-primary);
+}
+
+.status-swatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.status-composer-error {
+  margin: 8px 18px 0;
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--danger);
+}
+
+.status-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 18px 16px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Channels                                                             */
+/* ------------------------------------------------------------------ */
+
+.channels-lede {
+  margin: 0;
+  padding: 4px 22px 14px;
+  font-size: 13.5px;
+  line-height: 19px;
+  color: var(--text-secondary);
+}
+
+.channel-item {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  height: 72px;
+  padding: 0 12px 0 16px;
+}
+
+.channel-item:hover {
+  background: var(--bg-hover);
+}
+
+.channel-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.channel-top,
+.channel-bottom {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.channel-name {
+  min-width: 0;
+  font-size: var(--font-size-list-name);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channel-verified {
+  flex: none;
+  color: var(--accent-strong);
+}
+
+.channel-time {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--font-size-meta);
+  color: var(--text-secondary);
+}
+
+.channel-bottom {
+  font-size: var(--font-size-list-preview);
+  color: var(--text-secondary);
+}
+
+.channel-followers {
+  flex: none;
+}
+
+.channel-sep {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.channel-preview {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Inline "Find channels" form. */
+.channels-find {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 16px 14px;
+}
+
+.channels-find-row {
+  display: flex;
+  gap: 8px;
+}
+
+.channels-find-input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.channels-find-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.channels-find-error {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--danger);
+}
+
+/* Overflow affordance: reserved space keeps the 72px row metrics stable,
+ * revealed on hover / keyboard focus like the call-row actions. */
+.channel-item-menu {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin-left: -7px;
+  color: var(--text-secondary);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.channel-item:hover .channel-item-menu,
+.channel-item:focus-within .channel-item-menu {
+  opacity: 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Communities                                                          */
+/* ------------------------------------------------------------------ */
+
+.community-card {
+  margin: 2px 12px 10px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-header);
+  overflow: hidden;
+}
+
+.community-card-header {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.community-card-header:hover {
+  background: var(--bg-hover);
+}
+
+.community-avatar {
+  border-radius: 12px;
+}
+
+.community-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.community-name {
+  font-size: var(--font-size-list-name);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.community-meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.community-chevron {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.community-groups {
+  padding: 2px 0;
+  border-top: 1px solid var(--divider);
+}
+
+.community-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 12px 0 18px;
+}
+
+.community-group:hover {
+  background: var(--bg-hover);
+}
+
+.community-group-avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+}
+
+.community-group-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Starred messages */
+.starred-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--divider);
+}
+
+.starred-row:hover {
+  background: var(--bg-hover);
+}
+
+.starred-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.starred-chat {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.starred-text {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.starred-time {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+/* Communities (M5 remainder): real screen pieces                       */
+/* ------------------------------------------------------------------ */
+
+.community-lede {
+  margin: 0;
+  padding: 4px 22px 14px;
+  font-size: 13.5px;
+  line-height: 19px;
+  color: var(--text-secondary);
+}
+
+/* Honest session-scope note; mirrors the status milestone note. */
+.community-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 16px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-header);
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+.community-note svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.community-join {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 16px 14px;
+}
+
+.community-join-input {
+  flex: 1 1 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.community-join-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.community-join .modal-action {
+  margin-left: auto;
+}
+
+.community-inline-error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--danger);
+}
+
+/* Expanded card body. */
+.community-details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--divider);
+}
+
+.community-description {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 19px;
+  color: var(--text-secondary);
+}
+
+.community-detail-hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+.community-detail-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.community-detail-error p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--danger);
+}
+
+.community-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.community-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+}
+
+.community-invite-link {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--link);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+
+.community-copied {
+  flex: none;
+  font-size: 12px;
+  color: var(--accent-strong);
+}
+
+.community-group-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.community-group-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  font-size: 11px;
+  color: var(--text-secondary);
+  vertical-align: 1px;
+}
+
+.community-group-unlink {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  color: var(--text-secondary);
+}
+
+.community-link-row {
+  display: flex;
+  gap: 8px;
+}
+
+.community-link-select {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 13.5px;
+}
+
+.community-action-error {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--danger);
+}
+
+/* Create modal (shares `.modal-backdrop` and `.modal-header`). */
+.community-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(420px, calc(100vw - 48px));
+  border-radius: var(--radius-md);
+  background: var(--bg-modal);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+.community-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 18px 0;
+}
+
+.community-modal-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.community-modal-optional {
+  color: var(--text-muted);
+}
+
+.community-modal-input,
+.community-modal-textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.community-modal-input {
+  height: 40px;
+  padding: 0 12px;
+}
+
+.community-modal-textarea {
+  min-height: 72px;
+  resize: none;
+  font-family: inherit;
+}
+
+.community-modal-input::placeholder,
+.community-modal-textarea::placeholder {
+  color: var(--text-secondary);
+}
+
+.community-modal-error {
+  margin: 8px 18px 0;
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--danger);
+}
+
+.community-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 18px 16px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Status updates: sender groups + fullscreen viewer                    */
+/* ------------------------------------------------------------------ */
+
+/* Count badge when one sender posted several updates. */
+.status-group-count {
+  display: inline-block;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--bg-input);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--text-secondary);
+  text-align: center;
+  vertical-align: 1px;
+}
+
+/* Fullscreen viewer: dark backdrop, colored card, manual navigation. */
+.status-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.92);
+}
+
+.status-viewer-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(460px, 100%);
+  max-height: 100%;
+}
+
+.status-viewer-progress {
+  display: flex;
+  gap: 4px;
+  padding: 0 4px 10px;
+}
+
+.status-viewer-segment {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.status-viewer-segment.active {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.status-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 4px 14px;
+}
+
+.status-viewer-header .status-ring {
+  width: 44px;
+  height: 44px;
+}
+
+.status-viewer-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.status-viewer-name {
+  font-size: 15px;
+  font-weight: 500;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-viewer-time {
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.status-viewer-card {
+  min-height: min(58vh, 480px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px 32px;
+  border-radius: 16px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+
+.status-viewer-text {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.4;
+  color: #fff;
+  text-align: center;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.status-viewer-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.status-viewer-close {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.status-viewer-close:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.status-viewer-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-full);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.status-viewer-nav:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.status-viewer-nav:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.status-viewer-nav.prev {
+  left: 24px;
+}
+
+.status-viewer-nav.next {
+  right: 24px;
+}
+
+@media (max-width: 720px) {
+  .status-viewer-nav.prev {
+    left: 8px;
+  }
+
+  .status-viewer-nav.next {
+    right: 8px;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Media screen (rail Media button)                                    */
+/* ------------------------------------------------------------------ */
+
+.media-screen {
+  min-width: 0;
+}
+
+.media-header {
+  flex: none;
+  padding: 16px 24px 0;
+}
+
+.media-header .chat-list-title {
+  margin: 0;
+}
+
+.media-subtitle {
+  margin: 2px 0 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.media-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: 0 auto 14px;
+  padding: 3px;
+  width: fit-content;
+  border-radius: 8px;
+  background: var(--bg-hover);
+}
+
+.media-tab {
+  height: 24px;
+  padding: 0 22px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.media-tab.active {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-bubble);
+}
+
+.media-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 125px);
+  gap: 4px;
+  padding: 2px 16px 16px;
+}
+
+.media-tile {
+  position: relative;
+  width: 125px;
+  height: 125px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-hover);
+}
+
+.media-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.media-tile-placeholder {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+.media-tile-caption {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
+  color: #fff;
+  font-size: 10.5px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.media-tile:hover .media-tile-caption {
+  opacity: 1;
+}
+
+.media-tile-chat {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-list {
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px 16px;
+}
+
+.media-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 8px;
+}
+
+.media-row:hover {
+  background: var(--bg-hover);
+}
+
+.media-row-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.media-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.media-row-text {
+  font-size: 14px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-row-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.media-empty {
+  margin: 0;
+  padding: 48px 24px;
+  color: var(--text-secondary);
+  text-align: center;
+}

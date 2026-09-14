@@ -46,6 +46,17 @@ the webview; commands are `async` Tauri commands that delegate to core methods.
 - Marshals commands/events between the webview and the core.
 - Holds **no** business logic: every handler is a thin adapter.
 
+Native integrations:
+
+| Concern | Implementation |
+|---|---|
+| Menu bar | `src/menu.rs` builds the RustWA / Edit / View / Window / Help menus. `Preferences…` emits `ui://open-settings` to the webview; Reload, Actual Size, Zoom In/Out and Toggle Developer Tools (debug builds only) act on the main webview; Help opens the project's GitHub page. |
+| Notifications | `tauri-plugin-notification`; commands `notify(title, body)` and `notification_permission()`. |
+| Dock badge | `set_badge(count: Option<i64>)`; Tauri forwards the count to the macOS dock tile (`NSApplication.dockTile`). |
+| Single instance | `tauri-plugin-single-instance`; a second launch focuses the existing window. |
+| Window state | `tauri-plugin-window-state`; size and position are restored across launches. |
+| Capabilities | `platform_capabilities()` returns `{ badge, notifications, tray }` (camelCase) so the UI can adapt. |
+
 ### 3. `apps/desktop/src` — the UI
 
 - React 19 + TypeScript, Vite build, Zustand store.

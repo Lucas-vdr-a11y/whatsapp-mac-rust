@@ -3,8 +3,11 @@
 [![CI](https://github.com/Lucas-vdr-a11y/whatsapp-mac-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/Lucas-vdr-a11y/whatsapp-mac-rust/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **Status: pre-alpha.** The protocol core is being built now. Nothing here is
-> usable for real messaging yet — watch the milestones below.
+> **Status: pre-alpha, but it connects.** The Rust protocol core links via
+> QR pairing against real WhatsApp servers and exchanges text messages; the UI
+> is the familiar three-column layout with a live device-linking screen.
+> Media, groups, channels, calls and notifications are still on the roadmap —
+> see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 RustWA is an unofficial, from-scratch reimplementation of the WhatsApp desktop
 client for macOS. The goal is a client that feels instant, uses a fraction of
@@ -21,17 +24,17 @@ reproduce WhatsApp's layout faithfully at this level of detail.
 
 ## Why
 
-Measured on the development machine (Mac Catalyst WhatsApp 26.33.73, idle):
+Measured on the development machine (2026-09-13, idle, macOS 26.2 / M-series):
 
-| | Official app | RustWA | Target |
+| | Official app 26.33.73 | RustWA 0.1.0 | Target |
 |---|---|---|---|
-| Install size | 637 MB | — | < 50 MB |
-| Idle memory | ~340 MB (2 processes) | — | < 150 MB |
-| Idle CPU | 0.1–2% | — | ~0% |
-| Cold start | seconds | — | < 1 s |
+| Install size | 637 MB | **15 MB** `.app` (7 MB `.dmg`) | < 50 MB |
+| Idle memory | ~340–420 MB (2 processes) | **111 MB** (1 process) | < 150 MB |
+| Idle CPU | 0.1–2% | **~0%** | ~0% |
+| Cold start (window visible) | seconds | **0.41 s** | < 1 s |
 
-*(RustWA numbers land as milestones complete; we publish measured values, not
-marketing ones.)*
+Numbers are reproducible: `du -sh` on the bundles, `ps -o rss` after 30 s idle,
+and a launch-to-window poll. They will be re-measured every milestone.
 
 ## Architecture
 
@@ -103,18 +106,24 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 | Milestone | Scope | Status |
 |---|---|---|
-| M0 Bootstrap | workspace, CI, docs, UI shell | ✅ this PR |
-| M1 Protocol core | pairing (QR), connect, session persistence, text send/receive, receipts, presence | 🚧 next |
-| M2 Chat UI | chat list, conversation view, composer, message states | ⏳ |
-| M3 Media | images, video, documents, voice notes, stickers, link previews | ⏳ |
-| M4 Groups & communities | group chat, admin, communities | ⏳ |
-| M5 Channels & status | newsletters, status/stories | ⏳ |
-| M6 Calls | voice/video (research spike; hardest item) | ⏳ |
-| M7 Platform integration | notifications, dock badge, global shortcuts, share sheet, Siri | ⏳ |
-| M8 Parity audit | feature-by-feature sign-off against the official app | ⏳ |
+| M0 Core connection | pairing (QR / pair code / passkey), history sync, reconnect, media pipeline | ✅ pairing, session, history, media download/upload verified live |
+| M1 Everyday messaging | text, replies, mentions, receipts, typing, presence, notifications, drafts | ✅ all except server-side draft sync |
+| M2 Chat management | archive/pin/mute/delete, starred, search, favorites | ✅ archive/pin/mute/read live; starred and message search shipped |
+| M3 Media experience | images, video, voice, documents, stickers, view-once, disappearing | 🚧 images/video/voice/documents/stickers ship; view-once and auto-download policy pending |
+| M4 Message actions | reactions, edit, revoke, pins, forwarding, polls, events | ✅ reactions/edits/revokes live in both directions; forwarding, pins, polls shipped |
+| M5 Groups & communities | admin, invite links, join requests, communities | 🚧 create/info/add/remove/leave/invite live; join requests and communities pending |
+| M6 Status & channels | status/stories, channels/newsletters | 🚧 text status posting and channel follow/post; status viewing pending |
+| M7 Calls | 1:1 audio/video, screen share, call links, group calls | 🚧 1:1 audio with CoreAudio backend and call UI; video is upstream-preview-only |
+| M8 Privacy & security | privacy settings, app lock, chat lock, verification, proxy | 🚧 privacy settings, blocking, disappearing default; app-lock preference only |
+| M9 System integration | Siri, Shortcuts, widgets, share sheet, menu bar, deep links | 🚧 menu bar, tray, deep links, launch-at-login; Siri/Shortcuts and share sheet pending |
+| M10 Power features | business profiles, catalog, labels, quick replies, usernames | 🚧 profiles/labels/catalog/username lookup in core; UI pending |
+| M11 Research | scheduled messages, live location, translation | 🔬 scheduled messages research committed; protocol gaps documented |
+| M12 Out of scope | payments, Meta AI, interop bridges, E2E backups (Meta-gated) | ❌ |
 
-Full details in [docs/ROADMAP.md](docs/ROADMAP.md); feature research lives in
-[docs/research/](docs/research/).
+The full evidence-backed plan — every feature of the official app mapped
+against the open-source protocol stacks — lives in
+[docs/parity-matrix.md](docs/parity-matrix.md); see
+[docs/ROADMAP.md](docs/ROADMAP.md) for the condensed version.
 
 ## Legal & safety
 

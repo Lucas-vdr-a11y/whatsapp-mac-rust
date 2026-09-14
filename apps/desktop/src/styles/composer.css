@@ -1,0 +1,78 @@
+/* Composer extensions: mention autocomplete and draft state.
+ * Owned by the composer workstream.
+ *
+ * `.composer` already provides the positioning context (panels.css), so the
+ * mention menu hangs above the 62px composer row without changing its layout.
+ */
+
+.mention-menu {
+  position: absolute;
+  left: 56px;
+  bottom: calc(100% + 8px);
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  width: min(320px, calc(100vw - 40px));
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 0;
+  border-radius: var(--radius-md);
+  background: var(--bg-header);
+  box-shadow: var(--shadow-modal);
+}
+
+.mention-menu-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex: none;
+  padding: 6px 16px;
+  background: var(--bg-header);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 16px;
+  text-align: left;
+  color: var(--text-primary);
+}
+
+.mention-item.active {
+  background: var(--bg-hover);
+}
+
+.mention-avatar {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: #6a7175;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.mention-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mention-empty {
+  padding: 16px;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}

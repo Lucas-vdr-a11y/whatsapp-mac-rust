@@ -9,10 +9,37 @@
 //! The crate deliberately has no Tauri dependency so it stays testable and
 //! reusable from a CLI or a future native UI.
 
+pub mod actions;
+pub mod business;
+#[cfg(feature = "calls")]
+pub mod call_media;
+pub mod calls;
+pub mod channels;
+pub mod chat_ops;
+pub mod client;
+pub mod communities;
+pub mod contacts;
 pub mod error;
 pub mod events;
+pub mod groups;
+pub mod media;
+pub mod privacy;
+pub mod profile;
+pub mod statuses;
+pub mod store;
 pub mod types;
 
+#[cfg(feature = "calls")]
+pub use call_media::CoreAudioFactory;
+pub use client::{ClientConfig, EVENT_BUS_CAPACITY, WaClient};
+pub use communities::{CommunityInfo, CommunityLinkedGroup};
+pub use contacts::ContactProfile;
 pub use error::{CoreError, Result};
 pub use events::CoreEvent;
+pub use groups::GroupInfo;
+pub use media::MediaFile;
+pub use privacy::PrivacySnapshot;
+pub use profile::OwnProfile;
+pub use statuses::StatusUpdate;
+pub use store::Store;
 pub use types::{ChatSummary, Jid, Message, MessageKind, MessageStatus};

@@ -6,6 +6,12 @@ export interface ChatSummary {
   id: Jid;
   name: string;
   lastMessagePreview: string | null;
+  /** Kind of the newest message, when the core knows it. */
+  lastMessageKind?: MessageKind | null;
+  /** True when the newest message was sent by this account. */
+  lastFromMe?: boolean;
+  /** Delivery status of the newest message (colors the list tick). */
+  lastStatus?: MessageStatus | null;
   lastActivityTs: number;
   unreadCount: number;
   muted: boolean;
@@ -59,7 +65,8 @@ export type CoreEvent =
   | {
       type: "pairing";
       payload:
-        | { kind: "qrCode"; code: string }
+        | { kind: "qrCode"; code: string; timeoutSecs: number }
+        | { kind: "qrCodesExhausted" }
         | { kind: "pairCode"; code: string }
         | { kind: "pairSuccess"; jid: Jid }
         | { kind: "pairFailure"; reason: string };
@@ -70,6 +77,15 @@ export type CoreEvent =
       payload: { chatId: Jid; messageId: string; status: MessageStatus };
     }
   | { type: "chatUpdated"; payload: { chatId: Jid } }
+  | {
+      type: "reaction";
+      payload: { chatId: Jid; messageId: string; reactor: Jid; emoji: string };
+    }
+  | { type: "messageRevoked"; payload: { chatId: Jid; messageId: string } }
+  | {
+      type: "messageEdited";
+      payload: { chatId: Jid; messageId: string; text: string };
+    }
   | {
       type: "typing";
       payload: { chatId: Jid; senderId: Jid; isTyping: boolean };

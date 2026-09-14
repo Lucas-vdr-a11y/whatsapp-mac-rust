@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: Build RustWA.app + DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci --prefix apps/desktop
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Bundle
+        run: npm --prefix apps/desktop run tauri build
+
+      - name: Collect bundles
+        run: |
+          mkdir -p dist-release
+          cp target/release/bundle/dmg/*.dmg dist-release/ 2>/dev/null || true
+          ditto -c -k --keepParent target/release/bundle/macos/RustWA.app dist-release/RustWA.app.zip 2>/dev/null || true
+          ls -la dist-release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RustWA-macos
+          path: dist-release/*
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/*
+          generate_release_notes: true
