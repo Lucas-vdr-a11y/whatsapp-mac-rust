@@ -111,6 +111,11 @@ Notes:
 
 ### 3.2 Upstream code support — ✅ verified
 
+`liveLocationMessage` is an ordinary E2E `Message` field: the receive pipeline decrypts and
+delivers it through `Event::Messages` like any other payload (the classifier only decides the
+stanza `mediatype` on send). What upstream lacks is session orchestration (timers, sequence
+tracking, location keys) and any UI mapping.
+
 | Capability | Where | Status |
 | --- | --- | --- |
 | Classify stanza payload | `wacore-0.7.0/src/send/classify.rs:199-210` | `<enc mediatype="location">` for a static location, `"livelocation"` for `liveLocationMessage` (and for `location_message.is_live == true`). |
@@ -118,7 +123,7 @@ Notes:
 | User-content detection | `wacore-0.7.0/src/messages.rs:1008-1035` | `live_location_message` counts as user content (not SKDM-only), so it is surfaced. ✅ |
 | `contextInfo` helpers | `wacore-0.7.0/src/proto_helpers.rs:7-33,450-500` | `live_location_message` is in the context-info list (e.g. ephemeral expiration works). ✅ |
 | History-sync tags | `wacore-0.7.0/src/history_sync.rs:991,1124` | `live_location_message::CONTEXT_INFO == 17`, carrier slot 7. ✅ |
-| Reporting token | `wacore-0.7.0/src/reporting_token.rs:163-167` | Whitelisted subfields `6` (caption), `16`, `17` (contextInfo). ⚠️ The `// comment` label on field 16 is **wrong** in upstream (proto line 3650: field 16 is `jpegThumbnail`); flagged only as an upstream annotation bug, no action. |
+| Reporting token | `wacore-0.7.0/src/reporting_token.rs:163-168` | Whitelisted subfields `6` (caption), `16`, `17` (contextInfo). ⚠️ The `// comment` label on field 16 is **wrong** in upstream (proto line 3650: field 16 is `jpegThumbnail`); flagged only as an upstream annotation bug, no action. |
 | Send arbitrary payload | `whatsapp-rust-0.7.0/src/send/mod.rs:846,901` | `send_message(to, wa::Message)` / `send_message_with_options(..., SendOptions)` accept any `Message`, so a `liveLocationMessage` is sendable. There is **no dedicated location builder** — the proto struct is the whole surface. ✅ |
 | Edit arbitrary payload | `whatsapp-rust-0.7.0/src/client/messaging.rs:152,260` | `edit_message` / `edit_message_encrypted` accept any `new_content: wa::Message`. Available if a future capture proves the official update path is an edit. ✅ |
 | Custom enc types | `whatsapp-rust-0.7.0/src/bot.rs:1135` (`with_enc_handler`), `types/enc_handler.rs:16` | Extension point for `"frskmsg"`-style unknown enc types; wacore counts them in `unknown_enc_types` (`wacore-0.7.0/src/message_processing.rs:180`) and otherwise drops them. |

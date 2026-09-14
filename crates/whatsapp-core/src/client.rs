@@ -26,8 +26,8 @@ use whatsapp_rust::waproto::whatsapp as wa;
 use crate::error::{CoreError, Result};
 use crate::events::{
     ChatRemovedEvent, ChatUpdatedEvent, ConnectionEvent, ConnectionState, CoreEvent, ErrorEvent,
-    MessageEditedEvent, MessageRevokedEvent, MessageStatusChangedEvent, PairingEvent, PresenceEvent,
-    ReactionEvent, TypingEvent,
+    MessageEditedEvent, MessageRevokedEvent, MessageStatusChangedEvent, PairingEvent,
+    PresenceEvent, ReactionEvent, TypingEvent,
 };
 use crate::media::MediaStore as _;
 use crate::store::Store;
@@ -49,11 +49,27 @@ const CONTACT_NAME_PASS_CAP: u32 = 1000;
 const NAME_PASS_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(30);
 /// Pause between connecting and the full app-state replay, so the connection
 /// (and the incremental chat-list sync that runs first) has settled before
-/// the full `regular` snapshot re-downloads every patch.
+/// the chat-flag collections are re-downloaded as full snapshots.
 const FULL_SYNC_DELAY: std::time::Duration = std::time::Duration::from_secs(10);
 /// Pause between connecting and the contact → chat backfill, so the address
 /// book and any history import have landed in the store first.
 const CONTACT_BACKFILL_DELAY: std::time::Duration = std::time::Duration::from_secs(12);
+/// Page size for on-demand history requests that fill backfilled empty chats.
+const PDO_BACKFILL_COUNT: u32 = 50;
+/// Spacing between on-demand history requests: one chat every ~2s so the
+/// phone is not hammered with a burst of PDO requests.
+const PDO_BACKFILL_SPACING: std::time::Duration = std::time::Duration::from_secs(2);
+/// Per-session cap on on-demand history requests; remaining empty chats stay
+/// queued for a later session (their rows are reclaimed by the sweep and
+/// re-backfilled next time).
+const PDO_BACKFILL_CAP: usize = 20;
+/// Quiet period that ends a backfill round: no new chats queued for this
+/// long means the round has drained.
+const PDO_BACKFILL_IDLE: std::time::Duration = std::time::Duration::from_secs(15);
+/// Grace after the last request of a round before the empty-row sweep runs,
+/// so the PDO responses (which arrive as history-sync imports) have had a
+/// chance to land and are not mistaken for failed requests.
+const PDO_CLEANUP_GRACE: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// Wake-up handle for the event-driven name-resolution passes (audit S6).
 ///
@@ -75,13 +91,14 @@ impl NamePassTrigger {
     }
 }
 
-/// One-shot gate for the full `regular` app-state replay (audit S1).
+/// One-shot gate for the full chat-flag app-state replay (audit S1).
 ///
 /// Incremental app-state syncs never re-deliver chat-list patches another
 /// device already acked, which is why archive/mute/pin flags were missing.
 /// Once per session — shortly after connect, independent of history sync
-/// (which after initial pairing never runs again) — the `regular` collection
-/// is re-fetched as a full snapshot, replaying every patch.
+/// (which after initial pairing never runs again) — the collections that
+/// carry the chat-list flags (`regular_low`: archive/pin/read, `regular_high`:
+/// mute/star/delete) are re-fetched as full snapshots, replaying every patch.
 #[derive(Clone, Default)]
 struct FullSyncGate {
     fired: Arc<AtomicBool>,
@@ -267,6 +284,11 @@ impl WaClient {
         let store_messages = Arc::clone(&self.store);
         let store_updates = Arc::clone(&self.store);
         let store_history = Arc::clone(&self.store);
+        // Queue of backfilled chats that still need their history requested
+        // from the phone (contact-backfill convergence). Drained by a
+        // rate-limited worker spawned below.
+        let (pdo_requests, pdo_receiver) = tokio::sync::mpsc::unbounded_channel::<Jid>();
+        let pdo_history = pdo_requests.clone();
 
         let bot = Bot::builder()
             .with_backend(backend)
@@ -393,6 +415,7 @@ impl WaClient {
                 let bus = bus_history.clone();
                 let store = Arc::clone(&store_history);
                 let trigger = name_trigger_history.clone();
+                let pdo_requests = pdo_history.clone();
                 async move {
                     // Decompression and parsing are CPU-bound: keep them off
                     // the async worker threads.
@@ -404,8 +427,11 @@ impl WaClient {
                             import_history_sync(&bus, &store, &sync, &trigger);
                             // The import may have skipped conversations that
                             // history sync never sent; named contacts whose
-                            // chat row is still missing get one now.
-                            backfill_chats_from_contacts(&store, &bus);
+                            // chat row is still missing get one now, and the
+                            // empty ones get their history requested.
+                            for chat_id in backfill_chats_from_contacts(&store, &bus) {
+                                let _ = pdo_requests.send(chat_id);
+                            }
                         }));
                     }
                 }
@@ -527,20 +553,35 @@ impl WaClient {
         // Kick a first pass shortly after connect; history imports re-trigger.
         name_trigger.request();
 
-        // Replay the chat-list app state from a full snapshot once per
-        // session (audit S1). Incremental syncs never re-deliver patches the
-        // phone already acked, which left archive/mute/pin/read flags behind.
-        // This used to wait for the first history-sync import, but after
-        // initial pairing history sync never runs again — so the snapshot is
-        // now requested on a timer after connect (verified against upstream
-        // 0.7.0: consumers kick `MajorSyncTask::AppStateSync { full_sync:
-        // true }` themselves; the sync worker serializes it per collection).
+        // Replay the chat-list app state from full snapshots once per session
+        // (audit S1). Incremental syncs never re-deliver patches the phone
+        // already acked, which left archive/mute/pin/read flags behind. This
+        // used to wait for the first history-sync import, but after initial
+        // pairing history sync never runs again — so the snapshots are now
+        // requested on a timer after connect.
+        //
+        // Two upstream (0.7.0) facts shape this:
+        // - the flag actions do not live in `regular` at all: archive/pin/
+        //   markChatAsRead are in `regular_low`, mute/star/deleteChat in
+        //   `regular_high` (wacore-appstate schemas.rs), so those are the
+        //   collections that must be replayed;
+        // - the processor discards a snapshot whose version is at or below
+        //   the persisted one ("stale snapshot" guard, wacore appstate_sync.rs
+        //   `snapshot_is_stale`), so a full replay of a collection that
+        //   already synced incrementally is silently a no-op. Clearing the
+        //   stored version first (the same mechanism the one-time contact
+        //   backfill uses) makes the next sync request a snapshot at version
+        //   0, which is applied: its decoded mutations are dispatched as the
+        //   same per-chat events live patches produce, and the handlers above
+        //   persist the flags.
         {
             let client = Arc::downgrade(&bot.client());
             let gate = self.full_sync.clone();
             let trigger = name_trigger.clone();
             let store = Arc::clone(&self.store);
             let bus = self.events.clone();
+            let pdo_requests = pdo_requests.clone();
+            let data_dir = self.config.data_dir.clone();
             tokio::spawn(async move {
                 if !gate.fire() {
                     return;
@@ -549,18 +590,32 @@ impl WaClient {
                 let Some(client) = client.upgrade() else {
                     return;
                 };
-                client
-                    .process_sync_task(whatsapp_rust::sync_task::MajorSyncTask::AppStateSync {
-                        name: whatsapp_rust::wacore::appstate::patch_decode::WAPatchName::Regular,
-                        full_sync: true,
-                    })
-                    .await;
-                tracing::info!("full regular app-state snapshot finished");
-                // The snapshot can surface chats that were deferred or still
+                for name in [
+                    whatsapp_rust::wacore::appstate::patch_decode::WAPatchName::RegularLow,
+                    whatsapp_rust::wacore::appstate::patch_decode::WAPatchName::RegularHigh,
+                ] {
+                    if let Err(error) = reset_app_state_collection(&data_dir, name.as_str()) {
+                        tracing::warn!(
+                            %error,
+                            collection = name.as_str(),
+                            "could not reset the app-state version for the full replay"
+                        );
+                    }
+                    client
+                        .process_sync_task(whatsapp_rust::sync_task::MajorSyncTask::AppStateSync {
+                            name,
+                            full_sync: true,
+                        })
+                        .await;
+                }
+                tracing::info!("full app-state chat-flag replay finished");
+                // The snapshots can surface chats that were deferred or still
                 // unnamed; give the name passes a shot.
                 trigger.request();
-                // And it can reveal chats that never existed locally at all.
-                backfill_chats_from_contacts(&store, &bus);
+                // And they can reveal chats that never existed locally at all.
+                for chat_id in backfill_chats_from_contacts(&store, &bus) {
+                    let _ = pdo_requests.send(chat_id);
+                }
             });
         }
 
@@ -568,13 +623,119 @@ impl WaClient {
         // imported (audit S4): active direct chats were invisible because
         // their conversation was missing from every history blob. Runs after
         // connect and after every history import (see the HistorySync
-        // handler).
+        // handler); created empty rows are queued for history requests.
         {
             let store = Arc::clone(&self.store);
             let bus = self.events.clone();
+            let pdo_requests = pdo_requests.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(CONTACT_BACKFILL_DELAY).await;
-                backfill_chats_from_contacts(&store, &bus);
+                for chat_id in backfill_chats_from_contacts(&store, &bus) {
+                    let _ = pdo_requests.send(chat_id);
+                }
+            });
+        }
+
+        // On-demand history for backfilled chats (contact-backfill
+        // convergence): a row created from the address book has no messages,
+        // so the phone is asked for a page of the conversation (PDO
+        // HISTORY_SYNC_ON_DEMAND). The response flows through the regular
+        // history import, which fills the row and notifies the UI.
+        //
+        // Requests are spaced and capped per session. When the queue has been
+        // quiet long enough for a round to have drained and the responses to
+        // have landed (or failed), contact-sourced rows that still have no
+        // messages are swept: they are address-book entries no conversation
+        // ever existed for, not real chats. Rows dropped by the session cap
+        // are swept too and re-backfilled by a later session, so the backlog
+        // converges ~20 chats at a time.
+        {
+            let client = Arc::downgrade(&bot.client());
+            let store = Arc::clone(&self.store);
+            let bus = self.events.clone();
+            let mut receiver = pdo_receiver;
+            tokio::spawn(async move {
+                let mut sent = 0usize;
+                let mut requested: Vec<(Jid, std::time::Instant)> = Vec::new();
+                loop {
+                    match tokio::time::timeout(PDO_BACKFILL_IDLE, receiver.recv()).await {
+                        Ok(Some(chat_id)) => {
+                            if sent >= PDO_BACKFILL_CAP {
+                                // Past this session's budget: leave the row
+                                // for the sweep; a later session retries.
+                                continue;
+                            }
+                            if requested.iter().any(|(id, _)| id == &chat_id) {
+                                continue;
+                            }
+                            let Some(upstream) = client.upgrade() else {
+                                return;
+                            };
+                            let Ok(upstream_jid) = to_upstream_jid(&chat_id) else {
+                                continue;
+                            };
+                            match upstream
+                                .fetch_message_history(
+                                    &upstream_jid,
+                                    "",
+                                    false,
+                                    0,
+                                    PDO_BACKFILL_COUNT as i32,
+                                )
+                                .await
+                            {
+                                Ok(_) => {
+                                    sent += 1;
+                                    requested.push((chat_id, std::time::Instant::now()));
+                                }
+                                Err(error) => {
+                                    tracing::debug!(
+                                        %error,
+                                        chat = %chat_id,
+                                        "on-demand history request failed"
+                                    );
+                                }
+                            }
+                            tokio::time::sleep(PDO_BACKFILL_SPACING).await;
+                        }
+                        Ok(None) => return,
+                        Err(_idle) => {
+                            // The round has drained. Wait out the response
+                            // grace of the newest request, then sweep the
+                            // rows that never received anything. A response
+                            // landing even later re-creates the row through
+                            // the history import, so the sweep errs on the
+                            // side of tidiness rather than loss.
+                            if sent == 0 {
+                                continue;
+                            }
+                            if let Some((_, at)) = requested.last()
+                                && at.elapsed() < PDO_CLEANUP_GRACE
+                            {
+                                tokio::time::sleep(PDO_CLEANUP_GRACE - at.elapsed()).await;
+                            }
+                            match store.delete_empty_contact_chats(&[]) {
+                                Ok(deleted) if !deleted.is_empty() => {
+                                    tracing::info!(
+                                        count = deleted.len(),
+                                        "swept contact-sourced chats that never received messages"
+                                    );
+                                    for chat_id in deleted {
+                                        let _ =
+                                            bus.send(CoreEvent::ChatRemoved(ChatRemovedEvent {
+                                                chat_id,
+                                            }));
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(error) => {
+                                    tracing::warn!(%error, "empty contact-chat sweep failed")
+                                }
+                            }
+                            requested.clear();
+                        }
+                    }
+                }
             });
         }
 
@@ -1566,8 +1727,7 @@ fn handle_update_event(
                 if !subject.is_empty() {
                     match store.rename_chat(&chat_id, subject) {
                         Ok(true) => {
-                            let _ =
-                                bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
+                            let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
                         }
                         Ok(false) => {}
                         Err(error) => {
@@ -1604,9 +1764,7 @@ fn handle_update_event(
                 view_once: false,
             };
             let known = matches!(store.find_message(&message.id), Ok(Some(_)));
-            if !known
-                && let Err(error) = store.upsert_message(&message)
-            {
+            if !known && let Err(error) = store.upsert_message(&message) {
                 tracing::warn!(%error, "failed to store undecryptable placeholder");
             }
             if let Err(error) = store.record_message_activity(
@@ -1847,31 +2005,37 @@ fn import_history_sync(
 /// missing from its blobs stay invisible even when the address book knows
 /// them. This inserts a `name_source = 'contact'` row per affected contact
 /// and tells the UI so the list refreshes; existing rows are never touched.
-fn backfill_chats_from_contacts(store: &Store, bus: &broadcast::Sender<CoreEvent>) {
+/// The store resolves each contact onto its canonical identity, so a person
+/// the address book knows under both a phone number and a LID produces one
+/// row, not two. Returns the ids of the rows it created — empty by
+/// definition, so the caller can queue their history to be requested.
+fn backfill_chats_from_contacts(store: &Store, bus: &broadcast::Sender<CoreEvent>) -> Vec<Jid> {
     let candidates = match store.contacts_missing_chats(CONTACT_NAME_PASS_CAP) {
         Ok(candidates) => candidates,
         Err(error) => {
             tracing::warn!(%error, "contact backfill: listing contacts failed");
-            return;
+            return Vec::new();
         }
     };
-    if candidates.is_empty() {
-        return;
-    }
-    let mut created = 0usize;
+    let mut created = Vec::new();
     for (jid, name) in candidates {
         match store.upsert_chat_from_contact(&jid, &name) {
             Ok(true) => {
-                created += 1;
-                let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id: jid }));
+                let chat_id = store.canonical_jid(&jid).unwrap_or_else(|_| jid.clone());
+                created.push(chat_id.clone());
+                let _ = bus.send(CoreEvent::ChatUpdated(ChatUpdatedEvent { chat_id }));
             }
             Ok(false) => {}
             Err(error) => tracing::warn!(%error, chat = %jid, "contact backfill: insert failed"),
         }
     }
-    if created > 0 {
-        tracing::info!(created, "contact backfill created missing chat rows");
+    if !created.is_empty() {
+        tracing::info!(
+            count = created.len(),
+            "contact backfill created missing chat rows"
+        );
     }
+    created
 }
 
 /// WhatsApp history timestamps are usually milliseconds, but some server
@@ -1975,6 +2139,9 @@ fn classify(message: &wa::Message) -> MessageKind {
     }
     if base.sticker_message.is_set() {
         return MessageKind::Sticker;
+    }
+    if base.location_message.is_set() || base.live_location_message.is_set() {
+        return MessageKind::Location;
     }
     MessageKind::Unsupported
 }
