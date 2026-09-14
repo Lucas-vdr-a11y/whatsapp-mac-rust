@@ -868,13 +868,24 @@ impl Store {
     /// the address book knows the person. Only contacts with a non-empty
     /// `name` qualify; `push_name`-only rows are left to the live-message
     /// path so a stale push name never becomes a chat.
+    ///
+    /// A contact whose identity alias already resolves to another id is only
+    /// selected when that id has no chat row either, so a person stored in
+    /// the address book under both a phone number and a LID backfills into
+    /// one canonical row instead of two (contact-backfill convergence).
     pub fn contacts_missing_chats(&self, limit: u32) -> Result<Vec<(Jid, String)>> {
         let connection = self.lock()?;
         let mut statement = connection
             .prepare(
                 "SELECT c.id, c.name FROM contacts c
                  WHERE COALESCE(c.name, '') != ''
-                   AND NOT EXISTS (SELECT 1 FROM chats WHERE chats.id = c.id)
+                   AND NOT EXISTS (
+                       SELECT 1 FROM chats
+                       WHERE chats.id = c.id
+                          OR chats.id = (
+                              SELECT a.canonical FROM jid_aliases a WHERE a.jid = c.id
+                          )
+                   )
                  ORDER BY c.rowid DESC
                  LIMIT ?1",
             )
@@ -894,8 +905,13 @@ impl Store {
     /// Existing rows — including deferred placeholder rows — are never
     /// touched; naming them is `apply_contact_name`'s job. Returns `true`
     /// when a row was inserted.
+    ///
+    /// The row is created under the contact's canonical identity (see
+    /// [`Store::contact_backfill_identity`]): the phone-number form wins, a
+    /// LID-only contact resolves onto its same-named phone-number contact and
+    /// the LID is registered as an alias, so one person never gets two rows.
     pub fn upsert_chat_from_contact(&self, jid: &Jid, name: &str) -> Result<bool> {
-        let chat_id = self.canonical_jid(jid)?;
+        let chat_id = self.contact_backfill_identity(jid, name)?;
         let connection = self.lock()?;
         let inserted = connection
             .execute(
@@ -907,6 +923,122 @@ impl Store {
             )
             .map_err(storage_error)?;
         Ok(inserted > 0)
+    }
+
+    /// The chat id a contact-backfill row belongs under (contact-backfill
+    /// convergence).
+    ///
+    /// - an existing identity alias wins: the contact was already linked to
+    ///   another id (typically LID → phone number by usync or a contact
+    ///   update), and the row belongs to that id;
+    /// - a direct-chat LID contact without a mapping is matched against a
+    ///   same-named phone-number contact; the phone-number form is canonical,
+    ///   and the LID is registered as its alias so `canonical_jid` routes
+    ///   future LID traffic onto the same row;
+    /// - everything else is its own identity.
+    fn contact_backfill_identity(&self, jid: &Jid, name: &str) -> Result<Jid> {
+        let canonical = self.canonical_jid(jid)?;
+        if canonical.as_str() != jid.as_str() {
+            return Ok(canonical);
+        }
+        if jid.is_lid()
+            && !jid.is_group_lid_form()
+            && let Some(pn) = self.contact_with_pn_id_and_name(name)?
+        {
+            self.register_jid_alias(jid, &pn)?;
+            return Ok(pn);
+        }
+        Ok(jid.clone())
+    }
+
+    /// The phone-number contact id that carries exactly `name`, if any.
+    /// Matching on the name is a heuristic — it is only used when no alias
+    /// mapping exists, where the alternative is a duplicate row.
+    fn contact_with_pn_id_and_name(&self, name: &str) -> Result<Option<Jid>> {
+        let connection = self.lock()?;
+        connection
+            .query_row(
+                "SELECT id FROM contacts
+                 WHERE id LIKE '%@s.whatsapp.net' AND name = ?1
+                 ORDER BY rowid ASC
+                 LIMIT 1",
+                params![name],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|id| id.map(Jid::new))
+            .map_err(storage_error)
+    }
+
+    /// Record `canonical` as the chat id for `alias` without merging rows.
+    /// Only called when no mapping exists for `alias` yet.
+    fn register_jid_alias(&self, alias: &Jid, canonical: &Jid) -> Result<()> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO jid_aliases (jid, canonical) VALUES (?1, ?2)
+                 ON CONFLICT(jid) DO UPDATE SET canonical = excluded.canonical",
+                params![alias.as_str(), canonical.as_str()],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    /// Contact-sourced chat rows that never received a message (contact-
+    /// backfill convergence): no activity, no unread counter and no messages
+    /// — not under the row's own id and not under any alias that resolves to
+    /// it. These are address-book entries history sync never imported a
+    /// conversation for, not real conversations.
+    pub fn empty_contact_chats(&self, limit: u32) -> Result<Vec<Jid>> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id FROM chats
+                 WHERE name_source = 'contact'
+                   AND last_activity_ts = 0
+                   AND unread_count = 0
+                   AND NOT EXISTS (
+                       SELECT 1 FROM messages
+                       WHERE messages.chat_id = chats.id
+                          OR messages.chat_id IN (
+                              SELECT jid FROM jid_aliases WHERE canonical = chats.id
+                          )
+                   )
+                 ORDER BY rowid
+                 LIMIT ?1",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![limit], |row| row.get::<_, String>(0))
+            .map_err(storage_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map(|ids| ids.into_iter().map(Jid::new).collect())
+            .map_err(storage_error)
+    }
+
+    /// Delete the empty contact-sourced rows [`Store::empty_contact_chats`]
+    /// selects, except the ids in `exclude` — chats whose on-demand history
+    /// request may still be in flight. Returns the deleted chat ids so the
+    /// caller can tell the UI.
+    pub fn delete_empty_contact_chats(&self, exclude: &[Jid]) -> Result<Vec<Jid>> {
+        let candidates = self.empty_contact_chats(u32::MAX)?;
+        let mut deleted = Vec::new();
+        if candidates.is_empty() {
+            return Ok(deleted);
+        }
+        let connection = self.lock()?;
+        for chat_id in candidates {
+            if exclude.contains(&chat_id) {
+                continue;
+            }
+            let removed = connection
+                .execute("DELETE FROM chats WHERE id = ?1", params![chat_id.as_str()])
+                .map_err(storage_error)?;
+            if removed > 0 {
+                deleted.push(chat_id);
+            }
+        }
+        Ok(deleted)
     }
 
     /// Apply a sender's push name (live `PushNameUpdate`): store it on the
@@ -1379,10 +1511,7 @@ impl Store {
             )
             .map_err(storage_error)?;
         let deleted = connection
-            .execute(
-                "DELETE FROM chats WHERE id = ?1",
-                params![chat_id.as_str()],
-            )
+            .execute("DELETE FROM chats WHERE id = ?1", params![chat_id.as_str()])
             .map_err(storage_error)?;
         Ok(deleted > 0)
     }

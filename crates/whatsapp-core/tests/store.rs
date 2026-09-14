@@ -935,7 +935,11 @@ fn contact_backfill_creates_rows_only_for_named_contacts() {
 
     // Named contacts without a chat row: the backfill's target audience.
     store
-        .upsert_contact(&Jid::new("31657632048@s.whatsapp.net"), Some("Vincent"), None)
+        .upsert_contact(
+            &Jid::new("31657632048@s.whatsapp.net"),
+            Some("Vincent"),
+            None,
+        )
         .unwrap();
     store
         .upsert_contact(&Jid::new("31612345678@s.whatsapp.net"), Some("Levi"), None)
@@ -978,12 +982,11 @@ fn contact_backfill_creates_rows_only_for_named_contacts() {
 
     // A second run finds nothing new: existing rows are never rewritten.
     assert!(store.contacts_missing_chats(100).unwrap().is_empty());
-    assert!(!store
-        .upsert_chat_from_contact(
-            &Jid::new("31657632048@s.whatsapp.net"),
-            "Different Name",
-        )
-        .unwrap());
+    assert!(
+        !store
+            .upsert_chat_from_contact(&Jid::new("31657632048@s.whatsapp.net"), "Different Name",)
+            .unwrap()
+    );
     assert_eq!(
         store
             .list_chats()
@@ -1004,19 +1007,238 @@ fn contact_backfill_rows_resolve_group_flag_and_aliases() {
     store
         .upsert_contact(&Jid::new("14083231338501@lid"), Some("jacques Opa"), None)
         .unwrap();
-    store.link_jids(
-        &Jid::new("14083231338501@lid"),
-        &Jid::new("31641234567@s.whatsapp.net"),
-    ).unwrap();
+    store
+        .link_jids(
+            &Jid::new("14083231338501@lid"),
+            &Jid::new("31641234567@s.whatsapp.net"),
+        )
+        .unwrap();
 
     let candidates = store.contacts_missing_chats(10).unwrap();
     assert_eq!(candidates.len(), 1);
-    assert!(store
-        .upsert_chat_from_contact(&candidates[0].0, &candidates[0].1)
-        .unwrap());
+    assert!(
+        store
+            .upsert_chat_from_contact(&candidates[0].0, &candidates[0].1)
+            .unwrap()
+    );
     let chats = store.list_chats().unwrap();
     assert_eq!(chats.len(), 1);
     assert_eq!(chats[0].id.as_str(), "31641234567@s.whatsapp.net");
+}
+
+#[test]
+fn contact_backfill_dedupes_lid_and_phone_contacts() {
+    // The address book stores the same person under both forms (the contact
+    // update carries pn_jid and lid_jid). No alias exists yet, so the
+    // selector offers both; the backfill must produce one canonical row.
+    let store = Store::open_in_memory().expect("open store");
+    let pn = Jid::new("31643784576@s.whatsapp.net");
+    let lid = Jid::new("134625900925100@lid");
+    store.upsert_contact(&pn, Some("Levi"), None).unwrap();
+    store.upsert_contact(&lid, Some("Levi"), None).unwrap();
+
+    let candidates = store.contacts_missing_chats(100).unwrap();
+    assert_eq!(candidates.len(), 2, "both forms still have no chat row");
+
+    // Order is insertion order; both inserts must land on the same row.
+    let mut created = Vec::new();
+    for (jid, name) in &candidates {
+        if store.upsert_chat_from_contact(jid, name).unwrap() {
+            created.push(store.canonical_jid(jid).unwrap());
+        }
+    }
+
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats.len(), 1, "one person, one chat row");
+    assert_eq!(
+        chats[0].id, pn,
+        "the phone-number form is the canonical row"
+    );
+    assert_eq!(chats[0].name, "Levi");
+    assert_eq!(
+        store.canonical_jid(&lid).unwrap(),
+        pn,
+        "the LID must be registered as the PN row's alias"
+    );
+    // The reported created ids are the canonical row (for history requests).
+    assert!(created.contains(&pn));
+
+    // A second backfill run finds nothing left to do.
+    assert!(store.contacts_missing_chats(100).unwrap().is_empty());
+}
+
+#[test]
+fn contact_backfill_resolves_lid_contacts_without_an_alias() {
+    // A LID-only contact whose same-named phone-number contact exists:
+    // the row is created under the PN id even when the LID contact comes
+    // first, and the LID traffic alias is registered.
+    let store = Store::open_in_memory().expect("open store");
+    let lid = Jid::new("14083231338501@lid");
+    store
+        .upsert_contact(&lid, Some("jacques Opa"), None)
+        .unwrap();
+    store
+        .upsert_contact(
+            &Jid::new("31641234567@s.whatsapp.net"),
+            Some("jacques Opa"),
+            None,
+        )
+        .unwrap();
+
+    assert!(store.upsert_chat_from_contact(&lid, "jacques Opa").unwrap());
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats.len(), 1);
+    assert_eq!(chats[0].id.as_str(), "31641234567@s.whatsapp.net");
+    assert_eq!(
+        store.canonical_jid(&lid).unwrap().as_str(),
+        "31641234567@s.whatsapp.net"
+    );
+
+    // A different-named LID contact has no PN counterpart to resolve onto:
+    // it keeps its own row (nothing better is known).
+    let other = Jid::new("254970750308491@lid");
+    store
+        .upsert_contact(&other, Some("Zomaar Iemand"), None)
+        .unwrap();
+    assert!(
+        store
+            .upsert_chat_from_contact(&other, "Zomaar Iemand")
+            .unwrap()
+    );
+    let chats = store.list_chats().unwrap();
+    assert_eq!(chats.len(), 2);
+    assert!(chats.iter().any(|chat| chat.id == other));
+}
+
+#[test]
+fn contact_backfill_skips_contacts_whose_alias_row_exists() {
+    // Alias already registered (e.g. by usync): the LID contact must not
+    // even be selected when the canonical row exists.
+    let store = Store::open_in_memory().expect("open store");
+    let pn = "31641234567@s.whatsapp.net";
+    let lid = "14083231338501@lid";
+
+    store
+        .upsert_chat(&sample_chat(pn, "jacques Opa", 100))
+        .unwrap();
+    store
+        .upsert_contact(&Jid::new(pn), Some("jacques Opa"), None)
+        .unwrap();
+    store
+        .upsert_contact(&Jid::new(lid), Some("jacques Opa"), None)
+        .unwrap();
+    store.link_jids(&Jid::new(lid), &Jid::new(pn)).unwrap();
+
+    assert!(store.contacts_missing_chats(100).unwrap().is_empty());
+    assert!(
+        !store
+            .upsert_chat_from_contact(&Jid::new(lid), "jacques Opa")
+            .unwrap()
+    );
+    assert_eq!(store.list_chats().unwrap().len(), 1);
+}
+
+#[test]
+fn empty_contact_backfill_rows_are_swept() {
+    // Convergence cleanup: contact-sourced rows that never received a
+    // message are not real conversations. Rows with a message, with
+    // activity, with an unread counter, with another name source, or
+    // excluded as in-flight must all survive.
+    let store = Store::open_in_memory().expect("open store");
+
+    // Two plain backfill rows: prime sweep candidates.
+    store
+        .upsert_contact(&Jid::new("31611111111@s.whatsapp.net"), Some("Empty"), None)
+        .unwrap();
+    store
+        .upsert_contact(
+            &Jid::new("31622222222@s.whatsapp.net"),
+            Some("InFlight"),
+            None,
+        )
+        .unwrap();
+    assert!(
+        store
+            .upsert_chat_from_contact(&Jid::new("31611111111@s.whatsapp.net"), "Empty")
+            .unwrap()
+    );
+    let in_flight = Jid::new("31622222222@s.whatsapp.net");
+    assert!(
+        store
+            .upsert_chat_from_contact(&in_flight, "InFlight")
+            .unwrap()
+    );
+
+    // A backfill row that did get its history: kept.
+    store
+        .upsert_contact(
+            &Jid::new("31633333333@s.whatsapp.net"),
+            Some("Filled"),
+            None,
+        )
+        .unwrap();
+    assert!(
+        store
+            .upsert_chat_from_contact(&Jid::new("31633333333@s.whatsapp.net"), "Filled")
+            .unwrap()
+    );
+    store
+        .upsert_message(&sample_message("m1", "31633333333@s.whatsapp.net", 10))
+        .unwrap();
+
+    // A live row (activity, unread): kept even with a contact name.
+    store
+        .record_message_activity(
+            &Jid::new("31644444444@s.whatsapp.net"),
+            "hoi",
+            500,
+            Some("Active"),
+            true,
+        )
+        .unwrap();
+
+    // A deferred flag-patch row has a different name source: kept.
+    store
+        .set_chat_archived(&Jid::new("31655555555@s.whatsapp.net"), true)
+        .unwrap();
+
+    let selector = store.empty_contact_chats(100).unwrap();
+    assert_eq!(
+        selector,
+        vec![Jid::new("31611111111@s.whatsapp.net"), in_flight.clone(),],
+        "only message-less, inactive contact rows are sweep candidates"
+    );
+
+    // The in-flight chat is protected this round.
+    let deleted = store
+        .delete_empty_contact_chats(&[in_flight.clone()])
+        .unwrap();
+    assert_eq!(deleted, vec![Jid::new("31611111111@s.whatsapp.net")]);
+    let ids: Vec<String> = store
+        .list_chats()
+        .unwrap()
+        .into_iter()
+        .map(|chat| chat.id.as_str().to_owned())
+        .collect();
+    assert!(ids.contains(&in_flight.as_str().to_owned()));
+    assert!(ids.contains(&"31633333333@s.whatsapp.net".to_owned()));
+    assert!(ids.contains(&"31644444444@s.whatsapp.net".to_owned()));
+    assert!(ids.contains(&"31655555555@s.whatsapp.net".to_owned()));
+
+    // After the grace window the protection lapses.
+    let deleted = store.delete_empty_contact_chats(&[]).unwrap();
+    assert_eq!(deleted, vec![in_flight]);
+    let ids: Vec<String> = store
+        .list_chats()
+        .unwrap()
+        .into_iter()
+        .map(|chat| chat.id.as_str().to_owned())
+        .collect();
+    assert_eq!(ids.len(), 3, "only the swept rows are gone");
+    assert!(!ids.contains(&"31611111111@s.whatsapp.net".to_owned()));
+    assert!(!ids.contains(&"31622222222@s.whatsapp.net".to_owned()));
+    // A second sweep finds nothing left.
+    assert!(store.delete_empty_contact_chats(&[]).unwrap().is_empty());
 }
 
 #[test]
@@ -1025,18 +1247,18 @@ fn apply_push_name_only_renames_weak_direct_rows() {
 
     // A placeholder direct row (name = JID user part) gets the push name.
     store
-        .upsert_chat(&sample_chat("31657632048@s.whatsapp.net", "31657632048", 10))
+        .upsert_chat(&sample_chat(
+            "31657632048@s.whatsapp.net",
+            "31657632048",
+            10,
+        ))
         .unwrap();
-    assert!(store
-        .apply_push_name(&Jid::new("31657632048@s.whatsapp.net"), "Vincent")
-        .unwrap());
-    assert_eq!(
+    assert!(
         store
-            .list_chats()
-            .unwrap()[0]
-            .name,
-        "Vincent"
+            .apply_push_name(&Jid::new("31657632048@s.whatsapp.net"), "Vincent")
+            .unwrap()
     );
+    assert_eq!(store.list_chats().unwrap()[0].name, "Vincent");
     // The push name is also recorded on the contact.
     assert_eq!(
         store
@@ -1052,16 +1274,12 @@ fn apply_push_name_only_renames_weak_direct_rows() {
     store
         .apply_contact_name(&Jid::new("31657632048@s.whatsapp.net"), "Vincent B.")
         .unwrap();
-    assert!(!store
-        .apply_push_name(&Jid::new("31657632048@s.whatsapp.net"), "Vinnie")
-        .unwrap());
-    assert_eq!(
-        store
-            .list_chats()
-            .unwrap()[0]
-            .name,
-        "Vincent B."
+    assert!(
+        !store
+            .apply_push_name(&Jid::new("31657632048@s.whatsapp.net"), "Vinnie")
+            .unwrap()
     );
+    assert_eq!(store.list_chats().unwrap()[0].name, "Vincent B.");
 
     // Group rows are never renamed by a push name.
     store
@@ -1071,9 +1289,11 @@ fn apply_push_name_only_renames_weak_direct_rows() {
             chat
         })
         .unwrap();
-    assert!(!store
-        .apply_push_name(&Jid::new("120363404062663307@g.us"), "Someone")
-        .unwrap());
+    assert!(
+        !store
+            .apply_push_name(&Jid::new("120363404062663307@g.us"), "Someone")
+            .unwrap()
+    );
     let group = store
         .list_chats()
         .unwrap()
@@ -1083,9 +1303,11 @@ fn apply_push_name_only_renames_weak_direct_rows() {
     assert_eq!(group.name, "");
 
     // Empty push names are ignored.
-    assert!(!store
-        .apply_push_name(&Jid::new("31657632048@s.whatsapp.net"), "  ")
-        .unwrap());
+    assert!(
+        !store
+            .apply_push_name(&Jid::new("31657632048@s.whatsapp.net"), "  ")
+            .unwrap()
+    );
 }
 
 #[test]
@@ -1107,10 +1329,7 @@ fn clear_chat_empties_messages_but_keeps_the_row() {
 
     assert!(store.clear_chat(&chat_id).unwrap());
 
-    assert!(store
-        .list_messages(&chat_id, 50)
-        .unwrap()
-        .is_empty());
+    assert!(store.list_messages(&chat_id, 50).unwrap().is_empty());
     // The row survives, with preview and unread reset.
     let chat = &store.list_chats().unwrap()[0];
     assert_eq!(chat.name, "Alice");
@@ -1119,9 +1338,11 @@ fn clear_chat_empties_messages_but_keeps_the_row() {
     assert_eq!(chat.last_message_kind, None);
 
     // Clearing again is a no-op on a missing row.
-    assert!(!store
-        .clear_chat(&Jid::new("missing@s.whatsapp.net"))
-        .unwrap());
+    assert!(
+        !store
+            .clear_chat(&Jid::new("missing@s.whatsapp.net"))
+            .unwrap()
+    );
 }
 
 #[test]
@@ -1138,15 +1359,18 @@ fn delete_chat_removes_messages_and_reactions_with_it() {
         .upsert_reaction("m1", &Jid::new("bob@s.whatsapp.net"), "👍")
         .unwrap();
     store
-        .buffer_pending_reaction(&chat_id, "pending-1", &Jid::new("bob@s.whatsapp.net"), "🎉", 5)
+        .buffer_pending_reaction(
+            &chat_id,
+            "pending-1",
+            &Jid::new("bob@s.whatsapp.net"),
+            "🎉",
+            5,
+        )
         .unwrap();
 
     assert!(store.delete_chat(&chat_id).unwrap());
     assert!(store.list_chats().unwrap().is_empty());
-    assert!(store
-        .list_messages(&chat_id, 50)
-        .unwrap()
-        .is_empty());
+    assert!(store.list_messages(&chat_id, 50).unwrap().is_empty());
     assert_eq!(store.message_count().unwrap(), 0);
     // Buffered reactions for the deleted chat cannot resurrect it.
     store
@@ -1158,7 +1382,9 @@ fn delete_chat_removes_messages_and_reactions_with_it() {
         "buffered reactions of a deleted chat must be gone"
     );
 
-    assert!(!store
-        .delete_chat(&Jid::new("missing@s.whatsapp.net"))
-        .unwrap());
+    assert!(
+        !store
+            .delete_chat(&Jid::new("missing@s.whatsapp.net"))
+            .unwrap()
+    );
 }
